@@ -36,12 +36,16 @@ function Invoke-Check([string]$Name, [string]$Script) {
 }
 
 try {
-    # 0. 清理上次构建残留的安装包：只读体检会把 dist 里最新的安装包当作本轮产物，
-    #    残留旧包会导致「安装包 mtime 晚于 GreenSite.exe」误判并中止发布。
-    $staleSetups = @(Get-ChildItem -LiteralPath $distDir -Filter 'GreenSite-Setup-*.exe' -File -ErrorAction SilentlyContinue)
+    # 0. 归档上次构建的安装包与校验文件（移动而非删除，保留交付历史）：
+    #    只读体检会把 dist 根目录里最新的安装包当作本轮产物，残留旧包导致 mtime 误判并中止发布。
+    $staleSetups = @(Get-ChildItem -LiteralPath $distDir -Filter 'GreenSite-Setup-*' -File -ErrorAction SilentlyContinue)
     if ($staleSetups.Count -gt 0) {
-        Step "清理 $($staleSetups.Count) 个旧安装包（仅 dist/GreenSite-Setup-*.exe）"
-        foreach ($stale in $staleSetups) { Remove-Item -LiteralPath $stale.FullName -Force }
+        $archiveDir = Join-Path $distDir 'archive'
+        New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null
+        Step "归档 $($staleSetups.Count) 个旧安装包/校验文件 -> dist\archive"
+        foreach ($stale in $staleSetups) {
+            Move-Item -LiteralPath $stale.FullName -Destination (Join-Path $archiveDir $stale.Name) -Force
+        }
     }
 
     # 1. 前置断言：dotnet 10 + ISCC.exe

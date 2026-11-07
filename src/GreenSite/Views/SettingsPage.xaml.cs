@@ -29,6 +29,7 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         ThemeLightRadio.IsChecked = !string.Equals(s.Config.Theme, "dark", System.StringComparison.OrdinalIgnoreCase);
         ThemeDarkRadio.IsChecked = string.Equals(s.Config.Theme, "dark", System.StringComparison.OrdinalIgnoreCase);
         RetentionBox.Text = s.Config.LogRetentionDays.ToString();
+        FollowUpstreamCheck.IsChecked = s.Config.FollowUpstreamProxy;
         CloseHideRadio.IsChecked = !string.Equals(s.Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase);
         CloseExitRadio.IsChecked = string.Equals(s.Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase);
         _updating = false;
@@ -72,6 +73,13 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         AppState.Instance.SetCloseAction(CloseExitRadio.IsChecked == true ? "exit" : "hide");
     }
 
+    private void FollowUpstream_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updating) return;
+        // 常规偏好，非敏感项（与通知开关同级），免二次验证
+        AppState.Instance.SetFollowUpstream(FollowUpstreamCheck.IsChecked == true);
+    }
+
     private void RetentionApply_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(RetentionBox.Text.Trim(), out var days) || days is < 1 or > 365)
@@ -90,7 +98,7 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         AppState.Instance.RequirePassword("关闭保护", () => AppState.Instance.CloseProtection());
 
     private void Exit_Click(object sender, RoutedEventArgs e) =>
-        AppState.Instance.RequirePassword("退出程序", () => AppState.Instance.ExitApplication());
+        AppState.Instance.RequestExit(); // 退出决策唯一入口，内部按状态决定验证方式
 
     /// <summary>
     /// 重新生成恢复码：先经验证管理密码，旧恢复码立即失效。

@@ -219,30 +219,10 @@ public partial class LockPage : System.Windows.Controls.UserControl
     }
 
     // ── 退出程序 ──────────────────────────────────────────────
-    // 安全推理：
-    // - 首次运行（尚无配置文件）：磁盘无加密数据、拦截未开启，直接 Shutdown 无风险，
-    //   且此时 Config 未加载，任何密码验证路径都会抛异常。
-    // - 冷启动未解锁（IsUnlocked==false）：拦截本来就未开启，退出不会解除任何保护；
-    //   且 RequirePassword → VerifyPassword 会读取尚未加载的 Config 并抛异常，
-    //   故此处绝不能弹密码框，直接 ExitApplicationRaw()（跳过验证的原始退出）。
-    // - 已解锁（IsUnlocked==true，如恢复码解锁后停留在重设/展示面板）：拦截已开启，
-    //   必须经 RequirePassword 验证，防止未经认证的人一键解除保护；
-    //   此时 Config 已加载，VerifyPassword 可正常工作。
-    private void ExitButton_Click(object sender, RoutedEventArgs e)
-    {
-        var s = AppState.Instance;
-        if (s.IsFirstRun)
-        {
-            System.Windows.Application.Current.Shutdown();
-            return;
-        }
-        if (!s.IsUnlocked)
-        {
-            s.ExitApplicationRaw();
-            return;
-        }
-        s.RequirePassword("退出程序", s.ExitApplication);
-    }
+    // 退出决策（首启无残留直接退 / 未解锁不弹密码 / 已解锁密码验证 /
+    // 恢复码解锁未重设的僵局豁免）全部收敛在 AppState.RequestExit()。
+    private void ExitButton_Click(object sender, RoutedEventArgs e) =>
+        AppState.Instance.RequestExit();
 
     private void OnUnlocked()
     {

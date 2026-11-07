@@ -262,16 +262,9 @@ public partial class MainWindow : Window
         _trayMenu.Items.Add(close);
 
         var exit = new System.Windows.Forms.ToolStripMenuItem("退出程序");
-        // 未解锁：RequirePassword → VerifyPassword 会读尚未加载的 Config 抛异常，
-        // 且拦截本来未开启，退出无安全风险——直接 ExitApplicationRaw()。
-        // 已解锁：保持密码验证，防止未经认证的人一键解除保护。
-        exit.Click += (_, _) =>
-        {
-            if (!AppState.Instance.IsUnlocked)
-                AppState.Instance.ExitApplicationRaw();
-            else
-                AppState.Instance.RequirePassword("退出程序", () => AppState.Instance.ExitApplication());
-        };
+        // 退出决策（是否需要密码 / 恢复码解锁态的僵局豁免 / 未解锁直接退）
+        // 全部收敛在 AppState.RequestExit()，此处只调用。
+        exit.Click += (_, _) => AppState.Instance.RequestExit();
         _trayMenu.Items.Add(exit);
 
         UpdateTrayText();

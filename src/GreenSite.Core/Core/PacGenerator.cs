@@ -21,6 +21,7 @@ public static class PacGenerator
         var block = ruleset.EnabledBlockHosts.OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var exceptions = bypass
             .Where(e => e.StartsWith("*.", StringComparison.Ordinal)) // 通配域名；其余形式（IP 段/<local>）PAC 内无法可靠复刻，忽略
+            .Select(e => e[2..]) // 剥掉 "*.": gsSuffix 以「裸域+子域」匹配；保留星号将永不命中
             .OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var allowJson = JsonSerializer.Serialize(allow);
         var blockJson = JsonSerializer.Serialize(block);

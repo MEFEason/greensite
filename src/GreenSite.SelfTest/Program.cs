@@ -242,7 +242,9 @@ internal static class Program
             pacAcc.Contains("return 'PROXY 127.0.0.1:31234';", StringComparison.Ordinal));
         Check("加速器：ProxyOverride 例外直连",
             pacAcc.Contains("GS_EXCEPT", StringComparison.Ordinal) &&
-            pacAcc.Contains("*.example.com", StringComparison.Ordinal));
+            pacAcc.Contains("\"example.com\"", StringComparison.Ordinal));
+        Check("加速器：例外已剥星号",
+            !pacAcc.Contains("\"*.example.com\"", StringComparison.Ordinal));
         Check("ParseProxyServer 裸地址",
             ProxySettings.ParseProxyServer("127.0.0.1:7892") == "PROXY 127.0.0.1:7892");
         Check("ParseProxyServer https 优先",

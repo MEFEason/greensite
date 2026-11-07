@@ -46,6 +46,18 @@
                 </StackPanel>
             </Border>
 
+            <!-- 网络与加速器 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="网络与加速器" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="FollowUpstreamCheck" Content="检测到系统代理（加速器）时，非限制域名自动跟随其上游"
+                              Margin="0,12,0,0" Foreground="{DynamicResource TextPrimary}"
+                              Checked="FollowUpstream_Changed" Unchecked="FollowUpstream_Changed" />
+                    <TextBlock Text="开启后，白名单与其它域名走加速器代理通道，拦截仍对黑名单 100% 生效；关闭则一律直连。修改后 PAC 立即重建刷新。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- 窗口与退出 -->
             <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
                 <StackPanel>

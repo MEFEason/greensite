@@ -264,12 +264,39 @@ public sealed class AppState
         StateChanged?.Invoke();
     }
 
-    /// <summary>退出程序（需密码验证后调用）：恢复原代理、停止拦截、结束进程。</summary>
-    public void ExitApplication() => ExitApplicationRaw();
+    /// <summary>
+    /// 退出程序统一入口（所有 UI 出口都调它，决策只此一处）：
+    /// - 恢复码解锁但未重设：身份已由恢复码验证，再要旧密码会僵局 → 确认框后直接退出（本次会话不保存）；
+    /// - 已解锁：密码验证（RequirePassword）通过后退出；
+    /// - 未解锁（含首启页）：拦截未开启、无残留 → 确认后直接退出。
+    /// </summary>
+    public void RequestExit()
+    {
+        if (NeedPasswordReset)
+        {
+            var answer = System.Windows.MessageBox.Show(
+                "尚未设置新的管理密码，本次会话的修改不会被保存。\n\n仍要退出吗？",
+                "退出程序",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (answer == System.Windows.MessageBoxResult.Yes) ExitApplicationRaw();
+            return;
+        }
+        if (IsUnlocked)
+        {
+            RequirePassword("退出程序", ExitApplicationRaw);
+            return;
+        }
+        var ans = System.Windows.MessageBox.Show(
+            "退出程序？（尚未完成设置，不会产生任何拦截残留）",
+            "退出程序",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+        if (ans == System.Windows.MessageBoxResult.Yes) ExitApplicationRaw();
+    }
 
     /// <summary>
-    /// 退出流程本体（跳过密码验证）：Shutdown 保护器 → 保存配置（如有）→ 释放托盘 → Shutdown。
-    /// 仅供 RequirePassword 已通过的路径与无配置状态（OnWindowClose）使用。
+    /// 退出流程本体（调用方已完成身份决策）：Shutdown 保护器 → 保存配置（如有）→ 释放托盘 → Shutdown。
     /// </summary>
     public void ExitApplicationRaw()
     {
@@ -283,35 +310,26 @@ public sealed class AppState
     }
 
     /// <summary>
-    /// 主窗口 Closing 处理（bug #4 修复）。返回 true = 正在退出，调用方无需取消；
-    /// 返回 false = 调用方应取消关闭：未解锁且用户选「否」时保持窗口，已解锁且 CloseAction
-    /// 为 hide（或退出验证被取消）时由调用方隐藏到托盘。
+    /// 主窗口 Closing 处理。返回 true = 正在退出，调用方无需取消；
+    /// 返回 false = 调用方应取消关闭并保持/隐藏窗口。
+    /// 退出决策本身全部委托 RequestExit()（唯一决策点）。
     /// </summary>
     public bool OnWindowClose()
     {
-        // 未解锁（含首次设密码页）：保护尚未生效，确认后即可直接退出，无需也无法验证密码
-        if (!IsUnlocked)
+        // 未解锁与恢复码解锁未重设：RequestExit 已覆盖确认与豁免逻辑
+        if (!IsUnlocked || NeedPasswordReset)
         {
-            var answer = System.Windows.MessageBox.Show(
-                "退出程序？（尚未设置密码，不会产生任何拦截残留）",
-                "退出程序",
-                System.Windows.MessageBoxButton.YesNo,
-                System.Windows.MessageBoxImage.Question);
-            if (answer != System.Windows.MessageBoxResult.Yes) return false;
-            ExitApplicationRaw();
-            return true;
+            var before = IsExiting;
+            RequestExit();
+            return IsExiting && !before;
         }
 
         // 已解锁：按关闭行为设置分流
         if (string.Equals(Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase))
         {
-            var exited = false;
-            RequirePassword("退出程序", () =>
-            {
-                ExitApplication();
-                exited = true;
-            });
-            return exited; // 取消验证则返回 false，由调用方取消关闭
+            var before = IsExiting;
+            RequestExit();
+            return IsExiting && !before; // 取消验证则 false，由调用方取消关闭
         }
 
         return false; // "hide"：调用方隐藏窗口到托盘
@@ -432,6 +450,18 @@ public sealed class AppState
     {
         Config.CloseAction = value == "exit" ? "exit" : "hide";
         SaveConfig();
+    }
+
+    /// <summary>供设置页切换「跟随加速器上游」；变更后立即重建 PAC 并刷新。</summary>
+    public void SetFollowUpstream(bool enabled)
+    {
+        Config.FollowUpstreamProxy = enabled;
+        if (_controller is not null)
+        {
+            _controller.RefreshUpstream(); // 内部 seq+1 并更新 AutoConfigURL
+            SaveConfig();
+        }
+        StateChanged?.Invoke();
     }
 
     /// <summary>供设置页同步开机自启配置。</summary>
