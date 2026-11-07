@@ -149,14 +149,20 @@ def main() -> int:
         print(f"[3/4] remote：{REPO_URL}（普通 HTTPS，不含凭据）")
 
         # 4) 推送
-        try:
-            pushed = git("push", "-u", "origin", "main", timeout=180)
-        except subprocess.TimeoutExpired:
-            print("[4/4] push 超时（180s），可能被凭据管理器弹窗阻塞")
-            print(manual_steps())
-            return 5
-        if pushed.returncode != 0:
-            print(f"[4/4] push 失败：{redact(pushed.stderr.strip()[:500])}")
+        # 平台代理对 github.com 的 CONNECT 隧道可能间歇性返回 502 / Empty reply，
+        # 诊断结论：api.github.com 可达、github.com 直连不通，只能走代理且需重试。
+        pushed: subprocess.CompletedProcess[str] | None = None
+        for attempt in range(1, 4):
+            try:
+                pushed = git("push", "-u", "origin", "main", timeout=180)
+            except subprocess.TimeoutExpired:
+                print("[4/4] push 超时（180s），可能被凭据管理器弹窗阻塞")
+                print(manual_steps())
+                return 5
+            if pushed.returncode == 0:
+                break
+            print(f"[4/4] push 第 {attempt}/3 次失败：{redact(pushed.stderr.strip()[:300])}")
+        if pushed is None or pushed.returncode != 0:
             print(manual_steps())
             return 5
         print("[4/4] push：成功")
