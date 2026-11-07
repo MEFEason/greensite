@@ -1,0 +1,55 @@
+# GreenSite 默认限制清单（41 条 / 5 组）
+# 格式：[分组名] 单独一行，其后每行一个域名；# 为行内注释（会作为备注显示）
+# 匹配：后缀匹配，命中该域名本身及其所有子域
+# 标注 [宽] 的是基础设施主域，可能误伤同主域其它服务，可在界面一键禁用
+
+[抖音系]
+douyin.com
+douyinpic.com
+douyinvod.com
+douyinvod.net
+iesdouyin.com
+amemv.com
+bytedance.com       # [宽] 字节跳动主域
+byteimg.com
+bytecdn.com
+snssdk.com          # [宽] 字节 SDK 域名
+snssdk.net
+pstatp.com          # [宽] 统计 / CDN
+toutiaoimg.com
+zijie.com
+zijieapi.com
+volcengineapi.com
+byteoversea.com
+
+[TikTok]
+tiktok.com
+tiktokcdn.com
+tiktokcdn-us.com
+tiktokv.com
+tiktokv.org
+musical.ly
+muscdn.com
+
+[快手系]
+kuaishou.com
+kuaishouapp.com
+kuaishou.net
+gifshow.com
+gifshowcdn.com
+kwai.com
+ksyun.com
+kwimgs.com
+yximgs.com
+chongzuo.com
+chongzuocloud.com
+
+[西瓜·火山]
+xigua.com
+ixigua.com
+ixigua.net
+huoshan.com
+
+[直播平台]
+huya.com
+douyu.com

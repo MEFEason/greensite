@@ -1,0 +1,20 @@
+# GreenSite 默认白名单（15 条 / 1 组）
+# 白名单优先于限制列表：命中即放行，绝不被拦截
+# 来源：nr-gate/allowlist.txt（bilibili 全家桶放行）
+
+[B 站放行]
+bilibili.com
+bilivideo.com
+bilivideo.cn
+bilivideo.net
+biliapi.net
+biliapi.com
+bilicdn.com
+biliimg.com
+b23.tv
+hdslb.com
+bilibili.tv
+bili.plus
+biligame.com
+acg.tv
+bili-intl.com

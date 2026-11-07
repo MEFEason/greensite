@@ -11,4 +11,8 @@
   <ItemGroup>
     <ProjectReference Include="..\GreenSite.Core\GreenSite.Core.csproj" />
   </ItemGroup>
+  <!-- 默认清单是与 WPF 项目共用的唯一数据源，自检需复制到自己的输出目录 -->
+  <ItemGroup>
+    <Content Include="..\GreenSite\data\**\*" Link="data\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
