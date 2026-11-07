@@ -71,7 +71,7 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **73 条断言 / 8 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **97 条断言 / 8 组用例**：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表

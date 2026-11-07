@@ -33,10 +33,19 @@ public static class DefaultRules
 
             if (line.StartsWith('[') && line.EndsWith(']'))
             {
+                var header = line[1..^1].Trim();
+                // 组头支持关闭标记：「[分组名 (off)]」→ 该组出厂即停用
+                bool enabled = true;
+                if (header.EndsWith("(off)", StringComparison.OrdinalIgnoreCase))
+                {
+                    enabled = false;
+                    header = header[..^"(off)".Length].Trim();
+                }
                 current = new RuleGroup
                 {
-                    Name = line[1..^1].Trim(),
+                    Name = header,
                     IsAllow = isAllow,
+                    Enabled = enabled,
                     SortOrder = order++,
                 };
                 groups.Add(current);

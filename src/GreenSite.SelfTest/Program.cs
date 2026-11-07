@@ -81,11 +81,15 @@ internal static class Program
         // ── 默认清单 ──────────────────────────────────────────────
         var (groups, rules) = DefaultRules.CreateDefault();
         var groupById = groups.ToDictionary(g => g.Id);
-        Equal("默认分组数", 6, groups.Count);
-        Equal("默认限制条数", 41,
+        Equal("默认分组数", 7, groups.Count);
+        Equal("默认限制条数", 45,
             rules.Count(r => !groupById[r.GroupId].IsAllow));
         Equal("默认白名单条数", 15,
             rules.Count(r => groupById[r.GroupId].IsAllow));
+        var biliBlock = groups.Single(g => g.Name == "B 站" && !g.IsAllow);
+        Check("B 站限制组出厂停用", !biliBlock.Enabled);
+        Check("B 站限制组含 4 条",
+            rules.Count(r => r.GroupId == biliBlock.Id) == 4);
         Check("较宽主域已标注", RuleNormalizer.IsBroadDomain("bytedance.com"));
         Check("行内注释作为备注",
             rules.Any(r => r.Value == "bytedance.com" && (r.Note?.Contains("[宽]") ?? false)));
@@ -93,7 +97,22 @@ internal static class Program
         var engine = new RuleEngine(Ruleset.Build(groups, rules));
         Check("抖音被拦", engine.Evaluate("www.douyin.com").Kind == DecisionKind.Block);
         Check("斗鱼被拦（带端口）", engine.Evaluate("live.douyu.com:443").Kind == DecisionKind.Block);
-        Check("B 站放行", engine.Evaluate("live.bilibili.com").Kind == DecisionKind.Allow);
+        Check("B 站默认放行（限制组关）", engine.Evaluate("live.bilibili.com").Kind == DecisionKind.Allow);
+        Check("B 站不在有效黑名单", !engine.Evaluate("bilibili.com").IsWhitelist ||
+            !Ruleset.Build(groups, rules).EnabledBlockHosts.Contains("bilibili.com"));
+        // 打开 B 站限制组：白名单仍优先（双列语义，界面已提示）
+        biliBlock.Enabled = true;
+        var engineOn = new RuleEngine(Ruleset.Build(groups, rules));
+        Check("B 站组开 → 白名单仍优先放行",
+            engineOn.Evaluate("www.bilibili.com").Kind == DecisionKind.Allow);
+        // 同时关掉白名单组 → 真正拦截
+        var biliAllow = groups.Single(g => g.IsAllow);
+        biliAllow.Enabled = false;
+        var engineBlock = new RuleEngine(Ruleset.Build(groups, rules));
+        Check("限制组开+白名单关 → B 站被拦",
+            engineBlock.Evaluate("www.bilibili.com").Kind == DecisionKind.Block);
+        biliBlock.Enabled = false;
+        biliAllow.Enabled = true;
         Check("无关域名直连", engine.Evaluate("example.com").Kind == DecisionKind.Direct);
         Check("拦截归因带组名", engine.Evaluate("www.douyin.com").GroupName != null);
 
@@ -170,7 +189,7 @@ internal static class Program
             var loaded = store.Load(pwd);
             Equal("配置往返 PacSeq", 7L, loaded.PacSeq);
             Equal("配置往返 规则数", rules.Count, loaded.Rules.Count);
-            Equal("配置往返 分组数", 6, loaded.Groups.Count);
+            Equal("配置往返 分组数", 7, loaded.Groups.Count);
             Check("错误密码统一报错", Unified(() => store.Load("wrong-password")));
 
             cfg.PacSeq = 8;
@@ -183,7 +202,7 @@ internal static class Program
             Check("篡改 1 字节触发统一报错", Unified(() => store.Load(pwd)));
 
             File.Copy(store.BackupPath, store.Path, overwrite: true);
-            Check("config.bak 恢复可读", store.Load(pwd).Groups.Count == 6);
+            Check("config.bak 恢复可读", store.Load(pwd).Groups.Count == groups.Count);
 
             // 恢复码路径：设置恢复码 → 用恢复码解锁 → 换密码后旧恢复码失效
             var code = RecoveryCode.Generate();
