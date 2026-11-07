@@ -13,8 +13,8 @@
                 <!-- 首次运行：设置管理密码 -->
                 <StackPanel x:Name="SetupPanel" Visibility="Collapsed">
                     <TextBlock Text="首次使用 · 设置管理密码" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="管理密码用于解锁配置与敏感操作，至少 8 位。请牢记：本应用不提供任何无密码重置入口。"
-                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,16" />
+                    <TextBlock Text="管理密码用于解锁配置与敏感操作，至少 8 位。忘记时可用恢复码解锁，请牢记密码并抄录恢复码。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,16" TextWrapping="Wrap" />
                     <TextBlock Text="新密码" Style="{StaticResource BodyTextStyle}" />
                     <PasswordBox x:Name="NewPasswordBox" Style="{StaticResource InputPasswordBoxStyle}"
                                  Margin="0,4,0,10" />
@@ -43,11 +43,50 @@
                     <Button x:Name="UnlockButton" Content="解锁" IsDefault="True"
                             Style="{StaticResource PrimaryButtonStyle}" Margin="0,18,0,0"
                             HorizontalAlignment="Stretch" Click="Unlock_Click" />
+                    <Button x:Name="ForgotPasswordButton" Content="忘记管理密码？"
+                            Style="{StaticResource SecondaryButtonStyle}" Margin="0,10,0,0"
+                            HorizontalAlignment="Stretch" Click="ForgotPassword_Click" />
+                </StackPanel>
+
+                <!-- 恢复码解锁后：强制重设管理密码 -->
+                <StackPanel x:Name="ResetPanel" Visibility="Collapsed">
+                    <TextBlock Text="重设管理密码" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="你已使用恢复码解锁。为保障安全，请设置新的管理密码后再进入主界面。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,16" TextWrapping="Wrap" />
+                    <TextBlock Text="新密码" Style="{StaticResource BodyTextStyle}" />
+                    <PasswordBox x:Name="ResetNewPasswordBox" Style="{StaticResource InputPasswordBoxStyle}"
+                                 Margin="0,4,0,10" />
+                    <TextBlock Text="确认新密码" Style="{StaticResource BodyTextStyle}" />
+                    <PasswordBox x:Name="ResetConfirmPasswordBox" Style="{StaticResource InputPasswordBoxStyle}"
+                                 Margin="0,4,0,0" />
+                    <TextBlock x:Name="ResetErrorText" Style="{StaticResource BodyTextStyle}"
+                               Margin="0,10,0,0" Visibility="Collapsed" FontWeight="SemiBold" />
+                    <Button x:Name="ResetButton" Content="确认重设" IsDefault="True"
+                            Style="{StaticResource PrimaryButtonStyle}" Margin="0,18,0,0"
+                            HorizontalAlignment="Stretch" Click="Reset_Click" />
+                </StackPanel>
+
+                <!-- 恢复码展示（仅显示一次，由调用方传入文本后显示） -->
+                <StackPanel x:Name="RecoveryPanel" Visibility="Collapsed">
+                    <TextBlock Text="请抄录恢复码（仅显示这一次）" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBox x:Name="RecoveryCodeBox" Style="{StaticResource InputTextBoxStyle}"
+                             FontFamily="Consolas, Courier New, monospace" FontSize="20" FontWeight="SemiBold"
+                             IsReadOnly="True" TextWrapping="Wrap" TextAlignment="Center"
+                             IsInactiveSelectionHighlightEnabled="True" Margin="0,12,0,0" />
+                    <TextBlock Text="忘记管理密码时可用它解锁；请离线保管，不要拍照上传。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                    <Button x:Name="RecoveryConfirmButton" Content="我已抄录，开启保护" IsDefault="True"
+                            Style="{StaticResource PrimaryButtonStyle}" Margin="0,18,0,0"
+                            HorizontalAlignment="Stretch" Click="RecoveryConfirm_Click" />
                 </StackPanel>
 
                 <Border Style="{StaticResource DividerStyle}" />
-                <TextBlock Text="配置经管理密码加密保存；忘记密码无法找回，请妥善保管。"
-                           Style="{StaticResource MutedTextStyle}" HorizontalAlignment="Center" />
+                <Button x:Name="ExitButton" Content="退出程序"
+                        Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,0,12"
+                        HorizontalAlignment="Stretch" Click="ExitButton_Click" />
+                <TextBlock Text="配置经管理密码加密保存；忘记密码可用恢复码解锁；恢复码也忘记只能卸载重装。"
+                           Style="{StaticResource MutedTextStyle}" HorizontalAlignment="Center"
+                           TextWrapping="Wrap" />
             </StackPanel>
         </Border>
     </Grid>

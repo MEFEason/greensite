@@ -61,6 +61,12 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 - **关于页只显示 `full` 版本串本身**，不单独展示构建时间。
 - 消费链：`.version.ini` → `build.ps1` 以 `-p:` 注入程序集与 PE 版本资源 → `src/setup.iss` 用 ISPP `ReadIni` 读取（安装目录名、安装器名、卸载项版本）。
 
+## 3.1 v1.0.1 行为变更要点
+
+- **恢复码（密保）**：首次设置管理密码时同步生成一次性 25 位恢复码（Crockford Base32，`XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`），仅显示一次；磁盘只存 PBKDF2 哈希。忘记密码可在锁定页用恢复码解锁，解锁后强制立即设置新密码并轮换出新恢复码；设置页可「重新生成恢复码」（需密码）。代码入口 `src/GreenSite.Core/Security/RecoveryCode.cs`。恢复码也忘记只能卸载重装。
+- **加速器兼容（PAC 上游跟随）**：PAC 不再写死 DIRECT。检测到系统手动代理（`ProxyEnable=1` + `ProxyServer`）时非黑名单域名跟随该上游（`PROXY host:port`，https 端点优先），白名单同样走上游，`ProxyOverride` 中 `*.域名` 形式例外走 DIRECT；黑名单命中仍 100% 走本机拦截端口。代码入口：`PacGenerator.Generate` 的 `upstream` / `bypass` 参数、`ProxySettings.ReadUpstream` 解析、`ProtectionController.RefreshUpstream` 检测变化并递增 seq 重建 PAC。`AppConfig` 新增 `FollowUpstreamProxy=true`（默认开启）。
+- **退出与关闭只还原 AutoConfigURL**：`ProxySettings.Restore` **只**精确还原 `AutoConfigURL`，绝不写回 `ProxyEnable` / `ProxyServer` 旧快照（否则抹掉保护期间开启的加速器设置）；`RegistryGuard.OnTamper` 先经 `RefreshUpstream` 吸收加速器对同键的正常改动，再判断 `AutoConfigURL` 是否被移走。主窗口关闭行为可配置（托盘继续保护 / 停止拦截退出，需密码）。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
@@ -155,6 +161,7 @@ GreenSite/
 | WPF + WinForms 同开时的类型歧义 | `UseWPF` 与 `UseWindowsForms` 同时为 true 时，`Application` / `MessageBox` 在 `System.Windows` 与 `System.Windows.Forms` 间歧义，必须用完全限定名。 |
 | 托盘图标必须 `.ico` 路径 | `NotifyIcon` 只接受 `.ico` 文件；用 `assets/app.ico`（多尺寸 ICO，由 `gen_logo.py` 生成），不要用 `.png` / `.svg`。 |
 | 禁止按进程名结束进程 | 安装/卸载不得 `taskkill`，会误杀宿主进程；程序用命名 Mutex 自行处理单实例与退出。 |
+| `SecureConfigStore.Save` 第二参数已可选 | v1.0.1 起第二参数是可选的 `secretForInit`（仅首次设密 / 恢复码轮换等需要下发 DPAPI 密钥的场景传入），日常保存配置直接调用 `Save(config)` 即可，不要误以为必须传密钥。 |
 
 ## 8. 发布流程
 

@@ -78,7 +78,7 @@ public partial class MainWindow : Window
         _tray.ShowBalloonTip(
             3000,
             "GreenSite 已启动",
-            "已启动到托盘。点击托盘图标打开主界面并输入管理密码以开启保护。",
+            "已启动到托盘。点击托盘图标打开主界面，解锁后保护自动开启。",
             System.Windows.Forms.ToolTipIcon.Info);
     }
 
@@ -262,8 +262,16 @@ public partial class MainWindow : Window
         _trayMenu.Items.Add(close);
 
         var exit = new System.Windows.Forms.ToolStripMenuItem("退出程序");
-        exit.Click += (_, _) => AppState.Instance.RequirePassword(
-            "退出程序", () => AppState.Instance.ExitApplication());
+        // 未解锁：RequirePassword → VerifyPassword 会读尚未加载的 Config 抛异常，
+        // 且拦截本来未开启，退出无安全风险——直接 ExitApplicationRaw()。
+        // 已解锁：保持密码验证，防止未经认证的人一键解除保护。
+        exit.Click += (_, _) =>
+        {
+            if (!AppState.Instance.IsUnlocked)
+                AppState.Instance.ExitApplicationRaw();
+            else
+                AppState.Instance.RequirePassword("退出程序", () => AppState.Instance.ExitApplication());
+        };
         _trayMenu.Items.Add(exit);
 
         UpdateTrayText();
@@ -310,9 +318,13 @@ public partial class MainWindow : Window
     }
 
     // ── 关闭行为 ──────────────────────────────────────────────
+    // OnWindowClose 契约：true=放行关闭（未解锁时用户确认退出、或已解锁且 CloseAction=退出）；
+    // false=取消关闭（隐藏到托盘、或用户在「退出？」中选择取消）。
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (AppState.Instance.IsExiting) return; // 退出流程正常关闭
+        // 退出流程（ExitApplication 已置 IsExiting）内的 Shutdown 触发的 Closing 必须放行
+        if (AppState.Instance.IsExiting) return;
+        if (AppState.Instance.OnWindowClose()) return; // 放行关闭
         e.Cancel = true;
         Hide();
         AppState.Instance.LockEdit(); // 隐藏到托盘后自动锁定编辑

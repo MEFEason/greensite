@@ -24,6 +24,16 @@ public sealed class AppConfig
     public string? PasswordHash { get; set; }
     public string? PasswordSalt { get; set; }
 
+    /// <summary>密保恢复码哈希与 salt（首次设密码时生成，忘记密码用它解锁并重置）。</summary>
+    public string? RecoveryHash { get; set; }
+    public string? RecoverySalt { get; set; }
+
+    /// <summary>点主窗口关闭按钮的行为：hide=最小化到托盘（默认）；exit=停止拦截并退出。</summary>
+    public string CloseAction { get; set; } = "hide";
+
+    /// <summary>用户原代理快照之外，记录是否跟随加速器：auto=检测到系统手动代理则非黑名单域名走该代理。</summary>
+    public bool FollowUpstreamProxy { get; set; } = true;
+
     /// <summary>用户原代理设置快照，解除保护时精确还原。</summary>
     public ProxyBackup? ProxyBackup { get; set; }
 }

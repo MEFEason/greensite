@@ -185,6 +185,22 @@ internal static class Program
             File.Copy(store.BackupPath, store.Path, overwrite: true);
             Check("config.bak 恢复可读", store.Load(pwd).Groups.Count == 6);
 
+            // 恢复码路径：设置恢复码 → 用恢复码解锁 → 换密码后旧恢复码失效
+            var code = RecoveryCode.Generate();
+            Check("恢复码格式", code.Length == 29 && code.Count(c => c == '-') == 4);
+            Check("恢复码规范化往返", RecoveryCode.Normalize(code) == code);
+            Check("恢复码小写/空格可规范化",
+                RecoveryCode.Normalize(code.ToLowerInvariant().Replace('-', ' ')) == code);
+            Check("非法恢复码拒绝", RecoveryCode.Normalize("XXXX!") is null);
+            var (rh, rs) = PasswordHasher.Create(code);
+            cfg.RecoveryHash = rh; cfg.RecoverySalt = rs;
+            store.Save(cfg, pwd);
+            Check("恢复码可解锁配置",
+                store.LoadWithRecoveryCode(code).PacSeq == 8);
+            Check("错误恢复码统一报错",
+                Unified(() => store.LoadWithRecoveryCode("AAAAA-BBBBB-CCCCC-DDDDD-EEEEE")));
+            Check("密码仍可用", store.Load(pwd).RecoveryHash != null);
+
             Check("密码最短长度校验", ThrowsArg(() => PasswordHasher.Create("123")));
 
             var gate = new PasswordGate();
@@ -216,6 +232,25 @@ internal static class Program
         Check("PAC 含默认域名",
             pac.Contains("douyin.com", StringComparison.Ordinal) &&
             pac.Contains("bilibili.com", StringComparison.Ordinal));
+
+        // ── 用例 4b：加速器兼容（跟随系统手动代理）──
+        var pacAcc = PacGenerator.Generate(pacSet, 31234, 9, "PROXY 127.0.0.1:7892", ["*.example.com"]);
+        Check("加速器：白名单走上游而非 DIRECT",
+            pacAcc.Contains("return GS_UPSTREAM", StringComparison.Ordinal) &&
+            pacAcc.Contains("upstream=PROXY 127.0.0.1:7892", StringComparison.Ordinal));
+        Check("加速器：黑名单仍被拦",
+            pacAcc.Contains("return 'PROXY 127.0.0.1:31234';", StringComparison.Ordinal));
+        Check("加速器：ProxyOverride 例外直连",
+            pacAcc.Contains("GS_EXCEPT", StringComparison.Ordinal) &&
+            pacAcc.Contains("*.example.com", StringComparison.Ordinal));
+        Check("ParseProxyServer 裸地址",
+            ProxySettings.ParseProxyServer("127.0.0.1:7892") == "PROXY 127.0.0.1:7892");
+        Check("ParseProxyServer https 优先",
+            ProxySettings.ParseProxyServer("http=1.1.1.1:80;https=2.2.2.2:8080") == "PROXY 2.2.2.2:8080");
+        Check("ParseProxyServer socks-only → DIRECT",
+            ProxySettings.ParseProxyServer("socks=127.0.0.1:7891") == "DIRECT");
+        Check("ParseProxyOverride 过滤 <local>/IP 段",
+            ProxySettings.ParseProxyOverride("*.baidu.com;<local>;192.168.*.*").SequenceEqual(["*.baidu.com"]));
 
         // ── 用例 6：拦截端口端到端（PAC / HTTP / CONNECT / 日志脱敏）──
         var e2eDir = Path.Combine(Path.GetTempPath(), "greensite-e2e-" + Guid.NewGuid().ToString("N"));
@@ -273,16 +308,24 @@ internal static class Program
             using (var key = Registry.CurrentUser.CreateSubKey(testKey))
             {
                 key.SetValue("AutoConfigURL", "http://original.example/pac", RegistryValueKind.String);
-                key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
+                key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
             }
             var original = proxySettings.Snapshot();
             Check("快照记录用户原值",
-                original.AutoConfigUrl == "http://original.example/pac" && original.ProxyEnable == 1);
+                original.AutoConfigUrl == "http://original.example/pac" && original.ProxyEnable == 0);
             proxySettings.ApplyAutoConfigUrl("http://127.0.0.1:2222/proxy.pac?v=2");
+            // 保护期间用户开启加速器（ProxyEnable=1 + ProxyServer），GreenSite 全程不碰这两个值
+            using (var key = Registry.CurrentUser.OpenSubKey(testKey, writable: true)!)
+            {
+                key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
+                key.SetValue("ProxyServer", "127.0.0.1:7892", RegistryValueKind.String);
+            }
             proxySettings.Restore(original);
-            Check("原值精确还原", proxySettings.ReadAutoConfigUrl() == "http://original.example/pac");
+            Check("原 AutoConfigURL 精确还原", proxySettings.ReadAutoConfigUrl() == "http://original.example/pac");
             using (var key = Registry.CurrentUser.OpenSubKey(testKey))
-                Check("ProxyEnable 原值还原", key?.GetValue("ProxyEnable") is int pe && pe == 1);
+                Check("退出不抹除加速器：ProxyEnable/ProxyServer 保持用户当前值",
+                    key?.GetValue("ProxyEnable") is int pe && pe == 1 &&
+                    key?.GetValue("ProxyServer") as string == "127.0.0.1:7892");
         }
         finally
         {
@@ -311,9 +354,29 @@ internal static class Program
             Check("规则变更递增 PAC 版本", controller.PacUrl != urlBefore);
             Check("AutoConfigURL 同步更新", stateProxy.ReadAutoConfigUrl() == controller.PacUrl);
 
+            // 加速器跟随：用户在保护期间开启系统手动代理 → PAC 上游切换且 seq 递增
+            using (var key = Registry.CurrentUser.OpenSubKey(stateKey, writable: true)!)
+            {
+                key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
+                key.SetValue("ProxyServer", "127.0.0.1:7892", RegistryValueKind.String);
+            }
+            var urlBeforeAcc = controller.PacUrl;
+            controller.RefreshUpstream();
+            Check("检测到加速器后 PAC 递增版本", controller.PacUrl != urlBeforeAcc);
+            var pacBody = RawHttp(controller.Port,
+                "GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            Check("PAC 上游指向加速器",
+                pacBody.Contains("GS_UPSTREAM = 'PROXY 127.0.0.1:7892'", StringComparison.Ordinal));
+            Check("黑名单分支仍然拦截",
+                pacBody.Contains($"return 'PROXY 127.0.0.1:{controller.Port}'", StringComparison.Ordinal));
+
             controller.Shutdown();
             Check("退出后 Inactive", controller.State == ProtectionState.Inactive);
             Check("退出后恢复代理设置", stateProxy.ReadAutoConfigUrl() is null);
+            using (var key = Registry.CurrentUser.OpenSubKey(stateKey))
+                Check("退出后加速器设置未被抹除",
+                    key?.GetValue("ProxyEnable") is int pe2 && pe2 == 1 &&
+                    key?.GetValue("ProxyServer") as string == "127.0.0.1:7892");
             Check("退出后 ProtectionEnabled=false", !stateConfig.ProtectionEnabled);
         }
         finally

@@ -38,15 +38,14 @@ public static class PasswordHasher
         catch (FormatException) { return false; }
     }
 
-    /// <summary>派生配置完整性密钥。purpose 与密码哈希隔离，避免同密钥复用。</summary>
-    public static byte[] DeriveKey(string password, string saltBase64, string purpose)
+    /// <summary>
+    /// 派生配置完整性密钥。密钥来自**存储的密码哈希**（位于 DPAPI 密文内），
+    /// 使恢复码解锁路径（拿不到密码明文）也能校验完整性。purpose 隔离用途。
+    /// </summary>
+    public static byte[] DeriveStoredKey(string hashBase64, string saltBase64, string purpose)
     {
+        var material = Encoding.UTF8.GetBytes(hashBase64 + "|" + saltBase64 + "|" + purpose);
         var salt = Convert.FromBase64String(saltBase64);
-        var context = SHA256.HashData(Encoding.UTF8.GetBytes(saltBase64 + "|" + purpose));
-        var combined = new byte[salt.Length + context.Length];
-        salt.CopyTo(combined, 0);
-        context.CopyTo(combined, salt.Length);
-        return Rfc2898DeriveBytes.Pbkdf2(
-            Encoding.UTF8.GetBytes(password), combined, Iterations, HashAlgorithmName.SHA256, KeySize);
+        return Rfc2898DeriveBytes.Pbkdf2(material, salt, Iterations, HashAlgorithmName.SHA256, KeySize);
     }
 }

@@ -21,6 +21,8 @@ public sealed class ProtectionController : IDisposable
     private BlockingProxy? _endpoint;
     private RegistryGuard? _guard;
     private bool _started;
+    private string _upstreamPac = "DIRECT";
+    private string[] _upstreamBypass = [];
 
     public ProtectionState State { get; private set; } = ProtectionState.Inactive;
     public event EventHandler<BlockLogEntry>? Blocked;
@@ -64,11 +66,12 @@ public sealed class ProtectionController : IDisposable
 
         _endpoint = new BlockingProxy(
             _port, new RuleEngine(_ruleset), _log,
-            () => PacGenerator.Generate(_ruleset, _port, _seq));
+            () => PacGenerator.Generate(_ruleset, _port, _seq, _upstreamPac, _upstreamBypass));
         _endpoint.Blocked += (_, e) => Blocked?.Invoke(this, e);
         _endpoint.Start();
 
         _config.ProxyBackup = SafeSnapshot();
+        RefreshUpstream();
 
         if (_enableGuard)
         {
@@ -81,6 +84,34 @@ public sealed class ProtectionController : IDisposable
         _started = true;
         State = ProtectionState.Active;
         _config.ProtectionEnabled = true;
+    }
+
+    /// <summary>读取系统手动代理（加速器）并带入 PAC；变化则递增 seq 强制刷新。</summary>
+    public void RefreshUpstream()
+    {
+        if (!_config.FollowUpstreamProxy)
+        {
+            if (_upstreamPac != "DIRECT" || _upstreamBypass.Length != 0)
+            {
+                _upstreamPac = "DIRECT";
+                _upstreamBypass = [];
+                _seq++;
+                _config.PacSeq = _seq;
+            }
+            return;
+        }
+        var (pac, bypass) = _proxy.ReadUpstream();
+        if (pac == _upstreamPac && bypass.SequenceEqual(_upstreamBypass)) return;
+        _upstreamPac = pac;
+        _upstreamBypass = bypass;
+        _seq++;
+        _config.PacSeq = _seq;
+        if (_started)
+        {
+            _guard?.SetExpected(PacUrl);
+            _guard?.Suppress(TimeSpan.FromSeconds(3));
+            _proxy.ApplyAutoConfigUrl(PacUrl);
+        }
     }
 
     /// <summary>异常退出可能残留自己的 PAC；此时不能把它当成「用户原代理」。</summary>
@@ -101,6 +132,10 @@ public sealed class ProtectionController : IDisposable
 
     private void OnTamper()
     {
+        // 该键的任何变化都会触发：先吸收加速器对 ProxyServer/ProxyEnable 的正常改动，
+        // 再检查 AutoConfigURL 是否真的被移走，被移走才回滚。
+        RefreshUpstream();
+        if (string.Equals(_proxy.ReadAutoConfigUrl(), PacUrl, StringComparison.Ordinal)) return;
         _guard?.Suppress(TimeSpan.FromSeconds(3));
         _proxy.ApplyAutoConfigUrl(PacUrl);
     }

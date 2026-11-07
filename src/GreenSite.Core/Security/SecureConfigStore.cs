@@ -37,11 +37,17 @@ public sealed class SecureConfigStore
         BackupPath = System.IO.Path.Combine(directory, "config.bak");
     }
 
-    public void Save(AppConfig config, string password)
+    /// <summary>
+    /// 保存配置。secret 用于首次生成密码哈希；此后哈希已存于 config，HMAC 密钥统一由
+    /// 「存储的密码哈希」派生（DeriveStoredKey），使恢复码解锁路径也能校验完整性。
+    /// </summary>
+    public void Save(AppConfig config, string? secretForInit = null)
     {
         if (string.IsNullOrEmpty(config.PasswordHash) || string.IsNullOrEmpty(config.PasswordSalt))
         {
-            var (hash, salt) = PasswordHasher.Create(password);
+            if (string.IsNullOrEmpty(secretForInit))
+                throw new ArgumentException("首次保存必须提供密码明文");
+            var (hash, salt) = PasswordHasher.Create(secretForInit);
             config.PasswordHash = hash;
             config.PasswordSalt = salt;
         }
@@ -54,7 +60,7 @@ public sealed class SecureConfigStore
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(4), SchemaVersion);
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(8), body.Length);
 
-        var key = PasswordHasher.DeriveKey(password, config.PasswordSalt!, "config-hmac");
+        var key = PasswordHasher.DeriveStoredKey(config.PasswordHash!, config.PasswordSalt!, "config-hmac");
         byte[] bytes;
         try
         {
@@ -72,8 +78,19 @@ public sealed class SecureConfigStore
         File.Move(tmp, Path, overwrite: true);
     }
 
-    /// <summary>启动校验顺序：header 结构 → DPAPI 解密 → 密码哈希 → HMAC 完整性。任一失败统一报错。</summary>
-    public AppConfig Load(string password)
+    /// <summary>用管理密码加载。校验顺序：header → DPAPI → 凭据哈希 → HMAC；任一失败统一报错。</summary>
+    public AppConfig Load(string password) =>
+        LoadVerifying(config => PasswordHasher.Verify(
+            password, config.PasswordHash, config.PasswordSalt));
+
+    /// <summary>用恢复码加载（解锁后调用方须立即设置新密码并轮换恢复码）。</summary>
+    public AppConfig LoadWithRecoveryCode(string code) =>
+        LoadVerifying(config => !string.IsNullOrEmpty(config.RecoveryHash) &&
+            PasswordHasher.Verify(code, config.RecoveryHash, config.RecoverySalt));
+
+    private delegate bool SecretCheck(AppConfig config);
+
+    private AppConfig LoadVerifying(SecretCheck check)
     {
         try
         {
@@ -92,10 +109,10 @@ public sealed class SecureConfigStore
                 ?? throw new InvalidDataException();
             CryptographicOperations.ZeroMemory(plain);
 
-            if (!PasswordHasher.Verify(password, config.PasswordHash, config.PasswordSalt))
+            if (!check(config))
                 throw new InvalidDataException();
 
-            var key = PasswordHasher.DeriveKey(password, config.PasswordSalt!, "config-hmac");
+            var key = PasswordHasher.DeriveStoredKey(config.PasswordHash!, config.PasswordSalt!, "config-hmac");
             try
             {
                 var expected = HMACSHA256.HashData(key, bytes.AsSpan(0, HeaderSize + bodyLen));
@@ -111,7 +128,7 @@ public sealed class SecureConfigStore
                                      or IOException or UnauthorizedAccessException
                                      or ArgumentException)
         {
-            // 不区分「密码错」与「配置被篡改」，避免信息泄露
+            // 不区分「凭据错」与「配置被篡改」，避免信息泄露
             throw new ConfigCorruptedException(UnifiedError);
         }
     }

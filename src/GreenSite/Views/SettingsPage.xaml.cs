@@ -29,6 +29,8 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         ThemeLightRadio.IsChecked = !string.Equals(s.Config.Theme, "dark", System.StringComparison.OrdinalIgnoreCase);
         ThemeDarkRadio.IsChecked = string.Equals(s.Config.Theme, "dark", System.StringComparison.OrdinalIgnoreCase);
         RetentionBox.Text = s.Config.LogRetentionDays.ToString();
+        CloseHideRadio.IsChecked = !string.Equals(s.Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase);
+        CloseExitRadio.IsChecked = string.Equals(s.Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase);
         _updating = false;
     }
 
@@ -64,6 +66,12 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         AppState.Instance.SetTheme(ThemeDarkRadio.IsChecked == true ? "dark" : "light");
     }
 
+    private void CloseAction_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updating) return;
+        AppState.Instance.SetCloseAction(CloseExitRadio.IsChecked == true ? "exit" : "hide");
+    }
+
     private void RetentionApply_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(RetentionBox.Text.Trim(), out var days) || days is < 1 or > 365)
@@ -83,6 +91,34 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
 
     private void Exit_Click(object sender, RoutedEventArgs e) =>
         AppState.Instance.RequirePassword("退出程序", () => AppState.Instance.ExitApplication());
+
+    /// <summary>
+    /// 重新生成恢复码：先经验证管理密码，旧恢复码立即失效。
+    /// 新码明文只显示一次，提示用户立即抄录。
+    /// </summary>
+    private void RegenRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        AppState.Instance.RequirePassword("重新生成恢复码", () =>
+        {
+            string code;
+            try
+            {
+                code = AppState.Instance.RegenerateRecoveryCode();
+            }
+            catch
+            {
+                System.Windows.MessageBox.Show("重新生成失败，请重试", "恢复码",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            System.Windows.MessageBox.Show(
+                $"新恢复码：\n\n{code}\n\n" +
+                "请立即抄录并妥善保管。旧恢复码已立即失效；" +
+                "若忘记新恢复码，只能卸载重装。",
+                "恢复码已重新生成",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        });
+    }
 
     /// <summary>原密码由统一密码门禁验证，面板内输入新密码两次。</summary>
     private void ChangePwd_Click(object sender, RoutedEventArgs e)

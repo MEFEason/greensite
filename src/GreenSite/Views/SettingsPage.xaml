@@ -46,6 +46,23 @@
                 </StackPanel>
             </Border>
 
+            <!-- 窗口与退出 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="窗口与退出" Style="{StaticResource SectionTitleStyle}" />
+
+                    <TextBlock Text="关闭窗口时" Style="{StaticResource BodyTextStyle}" Margin="0,12,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <RadioButton x:Name="CloseHideRadio" Content="最小化到托盘（保护继续）" GroupName="CloseAction"
+                                     Margin="0,0,16,0" Foreground="{DynamicResource TextPrimary}" Checked="CloseAction_Changed" />
+                        <RadioButton x:Name="CloseExitRadio" Content="退出程序（停止拦截，需密码）" GroupName="CloseAction"
+                                     Foreground="{DynamicResource TextPrimary}" Checked="CloseAction_Changed" />
+                    </StackPanel>
+                    <TextBlock Text="选择「退出程序」时，关闭主窗口会先说明后果并验证管理密码后停止拦截；锁定页与首启页可直接退出（此时尚无拦截，无需密码）。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- 安全 -->
             <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
                 <StackPanel>
@@ -59,7 +76,7 @@
                         <Button Content="退出程序" Click="Exit_Click"
                                 Style="{StaticResource SecondaryButtonStyle}" />
                     </StackPanel>
-                    <TextBlock Text="关闭保护仅解除拦截、进程保留；退出程序会恢复原代理设置并结束进程。"
+                    <TextBlock Text="关闭保护仅解除拦截、进程保留；退出程序会停止拦截并结束进程（只还原 PAC 地址，不影响加速器设置）。"
                                Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
 
                     <!-- 修改密码面板：原密码由统一门禁验证，此处输入新密码两次 -->
@@ -81,6 +98,15 @@
                                     Click="ChangePwdConfirm_Click" />
                         </StackPanel>
                     </Border>
+
+                    <Border Style="{StaticResource DividerStyle}" />
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="重新生成恢复码" Click="RegenRecovery_Click"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                    </StackPanel>
+                    <TextBlock Text="生成新的一次性恢复码并显示一次，请立即抄录；旧恢复码随即失效。操作前需验证管理密码。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
         </StackPanel>
