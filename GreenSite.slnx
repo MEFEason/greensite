@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GreenSite.Core/GreenSite.Core.csproj" />
+    <Project Path="src/GreenSite.SelfTest/GreenSite.SelfTest.csproj" />
+    <Project Path="src/GreenSite/GreenSite.csproj" />
+  </Folder>
+</Solution>

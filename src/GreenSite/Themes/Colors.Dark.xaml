@@ -1,0 +1,16 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Color x:Key="WindowBackgroundColor">#151C19</Color>
+    <Color x:Key="CardBackgroundColor">#1E2823</Color>
+    <Color x:Key="TextPrimaryColor">#EDF5F1</Color>
+    <Color x:Key="TextSecondaryColor">#A3B4AC</Color>
+    <Color x:Key="BorderColor">#2C3A33</Color>
+    <Color x:Key="AccentColor">#34D399</Color>
+
+    <SolidColorBrush x:Key="WindowBackground" Color="{StaticResource WindowBackgroundColor}" />
+    <SolidColorBrush x:Key="CardBackground" Color="{StaticResource CardBackgroundColor}" />
+    <SolidColorBrush x:Key="TextPrimary" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="TextSecondary" Color="{StaticResource TextSecondaryColor}" />
+    <SolidColorBrush x:Key="BorderBrushLight" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="Accent" Color="{StaticResource AccentColor}" />
+</ResourceDictionary>

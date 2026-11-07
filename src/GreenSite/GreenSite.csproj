@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>GreenSite</AssemblyName>
+    <RootNamespace>GreenSite</RootNamespace>
+    <ApplicationIcon>assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Company>MEFEason</Company>
+    <Product>GreenSite</Product>
+    <Copyright>Copyright 2026 MEFEason</Copyright>
+    <!-- 版本号唯一来源是 scripts/gen_version.ps1 生成的 .version.ini；
+         build.ps1 以 -p:Version / -p:InformationalVersion / -p:FileVersion 注入。
+         这里的 0.0.0 仅表示「未注入的开发构建」，不得手动改成本次发布版本。 -->
+    <Version>0.0.0</Version>
+    <FileVersion>0.0.0.0</FileVersion>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GreenSite.Core\GreenSite.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\app.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\logo.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="data\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\NOTICE" Link="NOTICE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

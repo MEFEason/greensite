@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="GreenSite">
+  <title>GreenSite — 网站访问控制</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+    <clipPath id="round"><rect x="64" y="64" width="896" height="896" rx="216"/></clipPath>
+    <clipPath id="win"><rect x="188" y="246" width="648" height="548" rx="58"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <rect x="64" y="64" width="896" height="896" fill="url(#bg)"/>
+    <ellipse cx="512" cy="0" rx="372" ry="330" fill="#ffffff" opacity="0.16"/>
+  </g>
+  <g clip-path="url(#win)">
+    <rect x="188" y="246" width="648" height="548" fill="#ffffff"/>
+    <rect x="188" y="246" width="648" height="104" fill="#F1F5F9"/>
+    <circle cx="248" cy="298" r="15" fill="#94A3B8"/>
+    <circle cx="302" cy="298" r="15" fill="#94A3B8"/>
+    <circle cx="356" cy="298" r="15" fill="#94A3B8"/>
+    <rect x="410" y="278" width="376" height="40" rx="20" fill="#E2E8F0"/>
+    <rect x="438" y="293" width="170" height="10" rx="5" fill="#CBD5E1"/>
+  </g>
+  <g transform="translate(512 573) scale(0.54) translate(-512 -537)">
+    <path d="M300 268 Q512 236 724 268 Q734 452 712 566 Q652 716 512 806 Q372 716 312 566 Q290 452 300 268 Z" fill="#065F46"/>
+    <path d="M382 520 L468 606 L652 404" fill="none" stroke="#ffffff" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
