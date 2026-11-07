@@ -1,0 +1,62 @@
+<UserControl x:Class="GreenSite.Views.DashboardPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="状态总览" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock Text="保护状态与当前生效规则一览" Style="{StaticResource MutedTextStyle}"
+                       Margin="0,6,0,18" />
+
+            <WrapPanel>
+                <Border Style="{StaticResource CardBorderStyle}" Width="206" Margin="0,0,12,12">
+                    <StackPanel>
+                        <TextBlock Text="当前状态" Style="{StaticResource MutedTextStyle}" />
+                        <Border x:Name="StatePill" Style="{StaticResource PillBorderStyle}"
+                                HorizontalAlignment="Left" Margin="0,10,0,2">
+                            <TextBlock x:Name="StatePillText" Text="保护中"
+                                       Style="{StaticResource PillTextStyle}" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}" Width="206" Margin="0,0,12,12">
+                    <StackPanel>
+                        <TextBlock Text="今日拦截" Style="{StaticResource MutedTextStyle}" />
+                        <TextBlock x:Name="TodayCountText" Text="0" FontSize="26" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}" Margin="0,8,0,2" />
+                        <TextBlock Text="次" Style="{StaticResource MutedTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}" Width="206" Margin="0,0,12,12">
+                    <StackPanel>
+                        <TextBlock Text="分组数" Style="{StaticResource MutedTextStyle}" />
+                        <TextBlock x:Name="GroupCountText" Text="0" FontSize="26" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}" Margin="0,8,0,2" />
+                        <TextBlock x:Name="DisabledGroupCountText" Text="已关闭组 0"
+                                   Style="{StaticResource MutedTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}" Width="206" Margin="0,0,12,12">
+                    <StackPanel>
+                        <TextBlock Text="有效规则数" Style="{StaticResource MutedTextStyle}" />
+                        <TextBlock x:Name="EffectiveCountText" Text="0" FontSize="26" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}" Margin="0,8,0,2" />
+                        <TextBlock Text="组开关 ∧ 单条开关" Style="{StaticResource MutedTextStyle}" />
+                    </StackPanel>
+                </Border>
+            </WrapPanel>
+
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,6,0,12">
+                <StackPanel>
+                    <TextBlock Text="PAC 地址（只读）" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBox x:Name="PacUrlBox" IsReadOnly="True"
+                             Style="{StaticResource InputTextBoxStyle}" Margin="0,10,0,0" />
+                    <TextBlock Text="白名单优先：同一域名同时存在于黑白名单时，将始终放行。"
+                               Style="{StaticResource MutedTextStyle}" Margin="0,12,0,0" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

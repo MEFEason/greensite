@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using GreenSite.Core.Core;
 using GreenSite.Core.Models;
 using GreenSite.Core.Security;
+using Microsoft.Win32;
 
 namespace GreenSite.SelfTest;
 
@@ -27,10 +30,32 @@ internal static class Program
     private static Rule Domain(RuleGroup g, string value, bool enabled = true) =>
         new() { GroupId = g.Id, Type = RuleType.Domain, Value = value, RawValue = value, Enabled = enabled };
 
+    private static int FreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    private static string RawHttp(int port, string request)
+    {
+        using var client = new TcpClient();
+        client.Connect(IPAddress.Loopback, port);
+        client.ReceiveTimeout = 3000;
+        using var stream = client.GetStream();
+        var bytes = Encoding.ASCII.GetBytes(request);
+        stream.Write(bytes, 0, bytes.Length);
+        var buffer = new byte[16384];
+        var read = stream.Read(buffer, 0, buffer.Length);
+        return Encoding.UTF8.GetString(buffer, 0, read);
+    }
+
     private static int Main()
     {
         Console.OutputEncoding = Encoding.UTF8;
-        Console.WriteLine("GreenSite.SelfTest — 用例 1/2/3/5：规则引擎 · 白名单优先 · 分组开关 · 安全存储");
+        Console.WriteLine("GreenSite.SelfTest — 用例 1~8：规则引擎 · 白名单优先 · 分组开关 · 安全存储 · PAC · 拦截链路 · 状态机");
 
         // ── 用例 1：规范化与后缀匹配 ──────────────────────────────
         Check("规范化 去协议/端口/路径/尾点/大小写",
@@ -173,6 +198,128 @@ internal static class Program
         finally
         {
             Directory.Delete(tmpDir, recursive: true);
+        }
+
+        // ── 用例 4：PAC 生成 ──────────────────────────────────────
+        var pacSet = Ruleset.Build(groups, rules);
+        var pac = PacGenerator.Generate(pacSet, 31234, 7);
+        Check("PAC 白名单判断在前",
+            pac.IndexOf("if (gsSuffix(host, GS_ALLOW))", StringComparison.Ordinal) <
+            pac.IndexOf("if (gsSuffix(host, GS_BLOCK))", StringComparison.Ordinal));
+        Check("PAC 黑名单只走本地端口",
+            pac.Contains("return 'PROXY 127.0.0.1:31234';", StringComparison.Ordinal));
+        Check("PAC 黑名单无 DIRECT 兜底",
+            !pac.Contains("31234; DIRECT", StringComparison.Ordinal));
+        Check("PAC 带 seq 与 sha256",
+            pac.Contains("seq=7", StringComparison.Ordinal) && pac.Contains("sha256=", StringComparison.Ordinal));
+        Check("PAC 版本变化导致内容变化", PacGenerator.Generate(pacSet, 31234, 8) != pac);
+        Check("PAC 含默认域名",
+            pac.Contains("douyin.com", StringComparison.Ordinal) &&
+            pac.Contains("bilibili.com", StringComparison.Ordinal));
+
+        // ── 用例 6：拦截端口端到端（PAC / HTTP / CONNECT / 日志脱敏）──
+        var e2eDir = Path.Combine(Path.GetTempPath(), "greensite-e2e-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var e2eLog = new LogService(Path.Combine(e2eDir, "logs"));
+            var e2eRules = Ruleset.Build(groups, rules);
+            var port = FreePort();
+            var endpoint = new BlockingProxy(port, new RuleEngine(e2eRules), e2eLog,
+                () => PacGenerator.Generate(e2eRules, port, 1));
+            var notified = 0;
+            endpoint.Blocked += (_, _) => Interlocked.Increment(ref notified);
+            endpoint.Start();
+
+            var pacResp = RawHttp(port, "GET /proxy.pac?v=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            Check("端点提供 PAC 脚本",
+                pacResp.Contains("HTTP/1.1 200", StringComparison.Ordinal) &&
+                pacResp.Contains("FindProxyForURL", StringComparison.Ordinal));
+
+            var httpResp = RawHttp(port, "GET http://v.douyin.com/x?secret=1 HTTP/1.1\r\nHost: v.douyin.com\r\n\r\n");
+            Check("被拦 HTTP 返回 403", httpResp.Contains("403 Forbidden", StringComparison.Ordinal));
+
+            var connectResp = RawHttp(port, "CONNECT live.douyu.com:443 HTTP/1.1\r\nHost: live.douyu.com:443\r\n\r\n");
+            Check("被拦 CONNECT 返回 403", connectResp.Contains("403 Forbidden", StringComparison.Ordinal));
+
+            var entries = e2eLog.ReadRecent(1);
+            Check("拦截事件触发通知", notified >= 2);
+            Check("日志记录域名",
+                entries.Any(e => e.Host == "v.douyin.com") &&
+                entries.Any(e => e.Host == "live.douyu.com"));
+            Check("日志不含 URL 查询参数",
+                !File.ReadAllText(Path.Combine(e2eLog.Directory, $"block-{DateTimeOffset.Now:yyyyMMdd}.log"))
+                    .Contains("secret=1", StringComparison.Ordinal));
+            Check("日志归因带分组", entries.Any(e => e.GroupName.Length > 0));
+            endpoint.Stop();
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(e2eDir, recursive: true); } catch { }
+        }
+
+        // ── 用例 7：代理设置快照 / 精确还原（临时注册表键，不碰 Internet Settings）──
+        var testKey = @"Software\GreenSiteSelfTest\" + Guid.NewGuid().ToString("N");
+        var proxySettings = new ProxySettings(testKey);
+        try
+        {
+            var empty = proxySettings.Snapshot();
+            Check("空键快照 原值不存在", !empty.AutoConfigUrlExisted);
+            proxySettings.ApplyAutoConfigUrl("http://127.0.0.1:12345/proxy.pac?v=1");
+            Check("写入后可读",
+                proxySettings.ReadAutoConfigUrl() == "http://127.0.0.1:12345/proxy.pac?v=1");
+            proxySettings.Restore(empty);
+            Check("还原后删除自己写入的值", proxySettings.ReadAutoConfigUrl() is null);
+
+            using (var key = Registry.CurrentUser.CreateSubKey(testKey))
+            {
+                key.SetValue("AutoConfigURL", "http://original.example/pac", RegistryValueKind.String);
+                key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
+            }
+            var original = proxySettings.Snapshot();
+            Check("快照记录用户原值",
+                original.AutoConfigUrl == "http://original.example/pac" && original.ProxyEnable == 1);
+            proxySettings.ApplyAutoConfigUrl("http://127.0.0.1:2222/proxy.pac?v=2");
+            proxySettings.Restore(original);
+            Check("原值精确还原", proxySettings.ReadAutoConfigUrl() == "http://original.example/pac");
+            using (var key = Registry.CurrentUser.OpenSubKey(testKey))
+                Check("ProxyEnable 原值还原", key?.GetValue("ProxyEnable") is int pe && pe == 1);
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(testKey, throwOnMissingSubKey: false); } catch { }
+        }
+
+        // ── 用例 8：保护状态机（临时键 + 禁用注册表监视）──
+        var stateKey = @"Software\GreenSiteSelfTest\" + Guid.NewGuid().ToString("N");
+        var stateProxy = new ProxySettings(stateKey);
+        var stateDir = Path.Combine(Path.GetTempPath(), "greensite-state-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var stateLog = new LogService(Path.Combine(stateDir, "logs"));
+            var stateConfig = new AppConfig { PacSeq = 1 };
+            var controller = new ProtectionController(
+                stateConfig, Ruleset.Build(groups, rules), stateLog, stateProxy,
+                port: FreePort(), enableGuard: false);
+            Check("初始 Inactive", controller.State == ProtectionState.Inactive);
+            controller.Start();
+            Check("开启后 Active", controller.State == ProtectionState.Active);
+            Check("PAC URL 带版本号", controller.PacUrl.Contains("/proxy.pac?v=", StringComparison.Ordinal));
+            Check("已写入 AutoConfigURL", stateProxy.ReadAutoConfigUrl() == controller.PacUrl);
+
+            var urlBefore = controller.PacUrl;
+            controller.ApplyRules(Ruleset.Build(groups, rules));
+            Check("规则变更递增 PAC 版本", controller.PacUrl != urlBefore);
+            Check("AutoConfigURL 同步更新", stateProxy.ReadAutoConfigUrl() == controller.PacUrl);
+
+            controller.Shutdown();
+            Check("退出后 Inactive", controller.State == ProtectionState.Inactive);
+            Check("退出后恢复代理设置", stateProxy.ReadAutoConfigUrl() is null);
+            Check("退出后 ProtectionEnabled=false", !stateConfig.ProtectionEnabled);
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(stateKey, throwOnMissingSubKey: false); } catch { }
+            try { System.IO.Directory.Delete(stateDir, recursive: true); } catch { }
         }
 
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");

@@ -20,6 +20,8 @@ TestResults/
 config.bin
 config.bak
 .version.ini
+LICENSE.rtf
+*.sha256
 
 # 运行期数据
 *.log

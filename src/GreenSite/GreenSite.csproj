@@ -20,6 +20,9 @@
     <Version>0.0.0</Version>
     <FileVersion>0.0.0.0</FileVersion>
     <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <!-- 禁止 SDK 把 git commit SHA 追加到 InformationalVersion：
+         关于页必须只显示 full 版本串本身，不带 +<sha> 后缀。 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GreenSite.Core\GreenSite.Core.csproj" />
