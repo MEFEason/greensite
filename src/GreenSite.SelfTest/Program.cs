@@ -238,9 +238,9 @@ internal static class Program
         // ── 用例 4：PAC 生成 ──────────────────────────────────────
         var pacSet = Ruleset.Build(groups, rules);
         var pac = PacGenerator.Generate(pacSet, 31234, 7);
-        Check("PAC 白名单判断在前",
-            pac.IndexOf("if (gsSuffix(host, GS_ALLOW))", StringComparison.Ordinal) <
-            pac.IndexOf("if (gsSuffix(host, GS_BLOCK))", StringComparison.Ordinal));
+        Check("PAC 白名单判断在前（带时段门控）",
+            pac.IndexOf("gsAllowActive() && gsSuffix(host, GS_ALLOW)", StringComparison.Ordinal) <
+            pac.IndexOf("gsSuffix(host, GS_BLOCK)", StringComparison.Ordinal));
         Check("PAC 黑名单只走本地端口",
             pac.Contains("return 'PROXY 127.0.0.1:31234';", StringComparison.Ordinal));
         Check("PAC 黑名单无 DIRECT 兜底",
@@ -404,6 +404,263 @@ internal static class Program
         {
             try { Registry.CurrentUser.DeleteSubKeyTree(stateKey, throwOnMissingSubKey: false); } catch { }
             try { System.IO.Directory.Delete(stateDir, recursive: true); } catch { }
+        }
+
+        // ── 用例 9：规则变更后端点判定引擎同步（复现并验证「日志 allow / 不弹提示」修复）──
+        var hotKey = @"Software\GreenSiteSelfTest\" + Guid.NewGuid().ToString("N");
+        var hotDir = Path.Combine(Path.GetTempPath(), "greensite-hot-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var hotLog = new LogService(Path.Combine(hotDir, "logs"));
+            var hotAllow = Group("放行组", isAllow: true);
+            var hotBlock = Group("限制组");
+            // 同一域名同时存在白名单与黑名单规则；初始白名单开、黑名单关
+            var hotRules = new List<Rule>
+            {
+                Domain(hotAllow, "overlap.test"),
+                Domain(hotBlock, "overlap.test"),
+            };
+            hotBlock.Enabled = false;
+            var hotConfig = new AppConfig { PacSeq = 1 };
+            var hotPort = FreePort();
+            var hotProxy = new ProxySettings(hotKey);
+            var hotCtrl = new ProtectionController(
+                hotConfig, Ruleset.Build([hotAllow, hotBlock], hotRules),
+                hotLog, hotProxy, port: hotPort, enableGuard: false);
+            hotCtrl.Start();
+
+            // 用户操作：关闭白名单组 + 对同一域名开启黑名单组 → RefreshRules → ApplyRules
+            hotAllow.Enabled = false;
+            hotBlock.Enabled = true;
+            hotCtrl.ApplyRules(Ruleset.Build([hotAllow, hotBlock], hotRules));
+
+            var hotNotified = 0;
+            BlockLogEntry? hotLast = null;
+            hotCtrl.Blocked += (_, e) => { Interlocked.Increment(ref hotNotified); hotLast = e; };
+
+            var hotResp = RawHttp(hotPort,
+                "GET http://www.overlap.test/x?secret=1 HTTP/1.1\r\nHost: www.overlap.test\r\n\r\n");
+            Check("黑白切换后实际返回 403", hotResp.Contains("403 Forbidden", StringComparison.Ordinal));
+
+            var hotHit = hotLog.ReadRecent(1).FirstOrDefault(e => e.Host == "www.overlap.test");
+            Check("日志存在该域名记录", hotHit is not null);
+            Check("日志判定为 block（不是 allow）", hotHit is not null && !hotHit.Whitelisted);
+            Check("日志命中规则=黑名单规则", hotHit?.RuleValue == "overlap.test");
+            Check("日志命中组=限制组（归因不串到白名单）", hotHit?.GroupName == "限制组");
+            Check("日志记录时间", hotHit is not null && hotHit.Time > DateTimeOffset.MinValue);
+            Check("拦截事件触发（界面会弹提示）",
+                hotNotified >= 1 && hotLast is not null && !hotLast.Whitelisted);
+            var hotPac = RawHttp(hotPort,
+                "GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            Check("PAC 与端点一致：黑名单走拦截端口",
+                hotPac.Contains($"return 'PROXY 127.0.0.1:{hotPort}'", StringComparison.Ordinal));
+            Check("PAC 与端点一致：白名单集合已清空",
+                hotPac.Contains("var GS_ALLOW = [];", StringComparison.Ordinal));
+            Check("日志不含 URL 查询参数",
+                !File.ReadAllText(Path.Combine(hotLog.Directory, $"block-{DateTimeOffset.Now:yyyyMMdd}.log"))
+                    .Contains("secret=1", StringComparison.Ordinal));
+            hotCtrl.Shutdown();
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(hotKey, throwOnMissingSubKey: false); } catch { }
+            try { System.IO.Directory.Delete(hotDir, recursive: true); } catch { }
+        }
+
+        // ── 用例 10：白名单生效时段（24 小时制 / 多时段 / 跨午夜 / 时段外回退）──
+        var sched = new AllowlistSchedule
+        {
+            Enabled = true,
+            Windows =
+            [
+                new AllowTimeWindow { Start = "09:00", End = "10:00" },
+                new AllowTimeWindow { Start = "22:00", End = "06:00" },
+            ],
+        };
+        Check("时段格式校验 合法",
+            AllowlistSchedule.IsValidTime("09:00") && AllowlistSchedule.IsValidTime("23:59"));
+        Check("时段格式校验 拒绝非法",
+            !AllowlistSchedule.IsValidTime("25:99") &&
+            !AllowlistSchedule.IsValidTime("9:0") &&
+            !AllowlistSchedule.IsValidTime(""));
+        Check("时段内生效", sched.IsActiveAt(new TimeOnly(9, 30)));
+        Check("时段外失效", !sched.IsActiveAt(new TimeOnly(11, 0)));
+        Check("跨午夜 23:00 生效", sched.IsActiveAt(new TimeOnly(23, 0)));
+        Check("跨午夜 03:00 生效", sched.IsActiveAt(new TimeOnly(3, 0)));
+        Check("边界 10:00 失效（半开区间）", !sched.IsActiveAt(new TimeOnly(10, 0)));
+        Check("未启用时间控制 → 全天生效",
+            new AllowlistSchedule().IsActiveAt(new TimeOnly(3, 0)));
+        Check("无合法时段 → 不锁死白名单",
+            new AllowlistSchedule { Enabled = true }.IsActiveAt(new TimeOnly(3, 0)));
+        var messy = new AllowlistSchedule
+        {
+            Enabled = true,
+            Windows =
+            [
+                new AllowTimeWindow { Start = "09:00", End = "10:00" },
+                new AllowTimeWindow { Start = "bad", End = "18:00" },
+            ],
+        };
+        Equal("规范化剔除非法时段", 1, messy.Normalize());
+
+        var schedAllow = Group("放行组", isAllow: true);
+        var schedBlock = Group("限制组");
+        var schedRules = new List<Rule>
+        {
+            Domain(schedAllow, "timed.test"),
+            Domain(schedBlock, "timed.test"),
+        };
+        var schedSet = Ruleset.Build([schedAllow, schedBlock], schedRules, sched);
+        var schedEngine = new RuleEngine(schedSet);
+        Check("时段内：白名单优先 → Allow",
+            schedEngine.Evaluate("www.timed.test", now: new TimeOnly(9, 30)).Kind == DecisionKind.Allow);
+        var outside = schedEngine.Evaluate("www.timed.test", now: new TimeOnly(11, 0));
+        Check("时段外：回退常规判定 → Block", outside.Kind == DecisionKind.Block);
+        Check("时段外：归因取黑名单", outside.GroupName == "限制组" && outside.RuleValue == "timed.test");
+        Check("时段外：非黑白域名仍直连",
+            schedEngine.Evaluate("other.test", now: new TimeOnly(11, 0)).Kind == DecisionKind.Direct);
+        schedBlock.Enabled = false;
+        Check("时段外 + 黑名单关 → 白名单失效但不误拦",
+            new RuleEngine(Ruleset.Build([schedAllow, schedBlock], schedRules, sched))
+                .Evaluate("www.timed.test", now: new TimeOnly(11, 0)).Kind == DecisionKind.Direct);
+        schedBlock.Enabled = true;
+
+        var schedPac = PacGenerator.Generate(schedSet, 31234, 21);
+        Check("PAC 含实时时段判断函数",
+            schedPac.Contains("function gsAllowActive()", StringComparison.Ordinal));
+        Check("PAC 时段窗口已编入（分钟数）",
+            schedPac.Contains("[[540,600],[1320,360]]", StringComparison.Ordinal));
+        Check("PAC 白名单受时段门控",
+            schedPac.Contains("if (gsAllowActive() && gsSuffix(host, GS_ALLOW))", StringComparison.Ordinal));
+        Check("时段配置变化导致 PAC 内容变化",
+            PacGenerator.Generate(Ruleset.Build([schedAllow, schedBlock], schedRules,
+                new AllowlistSchedule
+                {
+                    Enabled = true,
+                    Windows = [new AllowTimeWindow { Start = "08:00", End = "09:00" }],
+                }), 31234, 21) != schedPac);
+        Check("未启用时段时 PAC 不做限制",
+            PacGenerator.Generate(Ruleset.Build([schedAllow, schedBlock], schedRules), 31234, 21)
+                .Contains("enabled: false", StringComparison.Ordinal));
+        Check("时段外 PAC 回退路径：黑名单分支含该域名",
+            schedPac.Contains("var GS_BLOCK = [\"timed.test\"];", StringComparison.Ordinal));
+
+        // 端到端：时段外白名单自动失效 → 命中黑名单 → 403 / 日志 block / 拦截提示三者一致
+        var nowMin = DateTime.Now.Hour * 60 + DateTime.Now.Minute;
+        static string Hhmm(int m) => $"{m / 60:00}:{m % 60:00}";
+        var offStart = (nowMin + 120) % 1440;
+        var offSched = new AllowlistSchedule
+        {
+            Enabled = true,
+            Windows = [new AllowTimeWindow { Start = Hhmm(offStart), End = Hhmm((offStart + 60) % 1440) }],
+        };
+        Check("构造的时段确实不含当前时刻",
+            !offSched.IsActiveAt(TimeOnly.FromDateTime(DateTime.Now)));
+
+        var offKey = @"Software\GreenSiteSelfTest\" + Guid.NewGuid().ToString("N");
+        var offDir = Path.Combine(Path.GetTempPath(), "greensite-off-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var offLog = new LogService(Path.Combine(offDir, "logs"));
+            var offAllow = Group("放行组", isAllow: true);
+            var offBlock = Group("限制组");
+            var offRules = new List<Rule>
+            {
+                Domain(offAllow, "offtime.test"),
+                Domain(offBlock, "offtime.test"),
+            };
+            var offPort = FreePort();
+            var offCtrl = new ProtectionController(new AppConfig { PacSeq = 1 },
+                Ruleset.Build([offAllow, offBlock], offRules, offSched),
+                offLog, new ProxySettings(offKey), port: offPort, enableGuard: false);
+            offCtrl.Start();
+            var offNotified = 0;
+            offCtrl.Blocked += (_, _) => Interlocked.Increment(ref offNotified);
+
+            var offResp = RawHttp(offPort,
+                "GET http://www.offtime.test/x HTTP/1.1\r\nHost: www.offtime.test\r\n\r\n");
+            Check("时段外实际返回 403", offResp.Contains("403 Forbidden", StringComparison.Ordinal));
+            var offHit = offLog.ReadRecent(1).FirstOrDefault(e => e.Host == "www.offtime.test");
+            Check("时段外日志记 block（白名单已失效）", offHit is not null && !offHit.Whitelisted);
+            Check("时段外日志命中黑名单规则", offHit?.RuleValue == "offtime.test");
+            Check("时段外日志带时间", offHit is not null && offHit.Time > DateTimeOffset.MinValue);
+            Check("时段外触发拦截提示事件", offNotified >= 1);
+            offCtrl.Shutdown();
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(offKey, throwOnMissingSubKey: false); } catch { }
+            try { System.IO.Directory.Delete(offDir, recursive: true); } catch { }
+        }
+
+        // ── 用例 11：开机自启 → 无密码快照 → 自动进入防护状态 ──
+        var bootKey = @"Software\GreenSiteSelfTest\" + Guid.NewGuid().ToString("N");
+        var bootDir = Path.Combine(Path.GetTempPath(), "greensite-boot-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var snapStore = new ProtectionSnapshotStore(bootDir);
+            var bootConfig = new AppConfig
+            {
+                Groups = groups,
+                Rules = rules,
+                PacSeq = 3,
+                AllowlistSchedule = sched,
+                // 故意塞入凭据哈希，验证快照模型结构上不会带出
+                PasswordHash = "SHOULD-NOT-BE-IN-SNAPSHOT",
+                RecoveryHash = "SHOULD-NOT-BE-IN-SNAPSHOT",
+            };
+            snapStore.Save(ProtectionSnapshot.FromConfig(bootConfig));
+            Check("自启快照已落盘", snapStore.Exists);
+            var loaded = snapStore.TryLoad();
+            Check("自启快照可无密码读回",
+                loaded is not null && loaded.Groups.Count == groups.Count && loaded.Rules.Count == rules.Count);
+            var restored = loaded!.ToConfig();
+            Check("快照不含任何凭据哈希",
+                restored.PasswordHash is null && restored.PasswordSalt is null &&
+                restored.RecoveryHash is null && restored.RecoverySalt is null);
+            Check("快照不含代理备份", restored.ProxyBackup is null);
+            Check("快照还原为自动防护标记", restored.ProtectionEnabled);
+            Check("快照保留白名单时段",
+                restored.AllowlistSchedule.Enabled && restored.AllowlistSchedule.Windows.Count == 2);
+            Check("快照保留跟随加速器开关", restored.FollowUpstreamProxy);
+
+            var bootProxy = new ProxySettings(bootKey);
+            var bootLog = new LogService(Path.Combine(bootDir, "logs"));
+            var bootPort = FreePort();
+            // 模拟 Initialize(autoStartLaunch: true) 的无密码启动路径
+            var bootCtrl = new ProtectionController(restored,
+                Ruleset.Build(restored.Groups, restored.Rules, restored.AllowlistSchedule),
+                bootLog, bootProxy, port: bootPort, enableGuard: false);
+            bootCtrl.Start();
+            Check("自启后防护自动 Active（无需密码）",
+                bootCtrl.IsActive && bootCtrl.State == ProtectionState.Active);
+            Check("自启后已写入 AutoConfigURL", bootProxy.ReadAutoConfigUrl() == bootCtrl.PacUrl);
+            Check("自启后 PAC 含白名单时段",
+                RawHttp(bootPort, "GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                    .Contains("function gsAllowActive()", StringComparison.Ordinal));
+
+            // 模拟用户随后输入密码解锁：必须复用同一端点，不得二次 Start
+            var fullConfig = new AppConfig { Groups = groups, Rules = rules, Port = 9999, PacSeq = 99 };
+            var beforePort = bootCtrl.Port;
+            var beforeActive = bootCtrl.IsActive;
+            bootCtrl.Reconfigure(fullConfig, Ruleset.Build(groups, rules));
+            Check("解锁复用端点：端口不变", bootCtrl.Port == beforePort);
+            Check("解锁后仍 Active（无二次 Start）", beforeActive && bootCtrl.IsActive);
+            Check("解锁后 ProtectionEnabled 同步", fullConfig.ProtectionEnabled);
+            Check("解锁后端口写回完整配置", fullConfig.Port == beforePort);
+
+            bootCtrl.Shutdown();
+            Check("自启会话退出后还原代理", bootProxy.ReadAutoConfigUrl() is null);
+
+            File.WriteAllText(snapStore.Path, "broken");
+            Check("快照损坏不阻塞启动（返回 null）", snapStore.TryLoad() is null);
+            snapStore.Delete();
+            Check("快照可删除", !snapStore.Exists);
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(bootKey, throwOnMissingSubKey: false); } catch { }
+            try { System.IO.Directory.Delete(bootDir, recursive: true); } catch { }
         }
 
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");

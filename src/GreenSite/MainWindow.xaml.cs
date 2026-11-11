@@ -72,13 +72,16 @@ public partial class MainWindow : Window
     }
 
     // ── 启动与解锁 ────────────────────────────────────────────
-    /// <summary>开机自启（--minimized）：主窗口保持未显示，托盘提示用户解锁。</summary>
+    /// <summary>开机自启（--minimized）：主窗口保持未显示；防护已在 Initialize 阶段自动开启。</summary>
     public void StartMinimized()
     {
+        var active = AppState.Instance.IsProtectionActive;
         _tray.ShowBalloonTip(
             3000,
             "GreenSite 已启动",
-            "已启动到托盘。点击托盘图标打开主界面，解锁后保护自动开启。",
+            active
+                ? "开机自启完成，防护已自动开启。点击托盘图标打开主界面（修改设置需解锁）。"
+                : "已启动到托盘。点击托盘图标打开主界面，解锁后保护自动开启。",
             System.Windows.Forms.ToolTipIcon.Info);
     }
 
@@ -166,8 +169,20 @@ public partial class MainWindow : Window
         var s = AppState.Instance;
         if (!s.IsUnlocked)
         {
-            StatusPillText.Text = "未解锁";
-            TodayBlockedText.Text = "今日拦截 0 次";
+            // 开机自启无需密码即进入防护状态：界面提示必须与实际拦截一致
+            var auto = s.IsProtectionActive;
+            StatusPillText.Text = auto ? "保护中（未解锁）" : "未解锁";
+            if (auto)
+            {
+                StatusPill.SetResourceReference(Border.BackgroundProperty, "Accent");
+                StatusPillText.SetResourceReference(TextBlock.ForegroundProperty, "WindowBackground");
+            }
+            else
+            {
+                StatusPill.SetResourceReference(Border.BackgroundProperty, "BorderBrushLight");
+                StatusPillText.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimary");
+            }
+            TodayBlockedText.Text = auto ? $"今日拦截 {s.Controller.TodayBlockedCount} 次" : "今日拦截 0 次";
             UpdateTrayText();
             return;
         }
@@ -202,12 +217,12 @@ public partial class MainWindow : Window
         {
             _trayStatusItem.Text = s.IsUnlocked
                 ? (s.IsProtectionActive ? "保护状态：保护中（点击关闭）" : "保护状态：已关闭（点击开启）")
-                : "保护状态：未解锁";
+                : (s.IsProtectionActive ? "保护状态：保护中（开机自启，未解锁）" : "保护状态：未解锁");
             _trayStatusItem.Checked = s.IsProtectionActive;
         }
         if (_trayTodayItem is not null)
         {
-            _trayTodayItem.Text = s.IsUnlocked
+            _trayTodayItem.Text = s.IsProtectionActive || s.IsUnlocked
                 ? $"今日拦截 {s.Controller.TodayBlockedCount} 次"
                 : "今日拦截 0 次";
         }

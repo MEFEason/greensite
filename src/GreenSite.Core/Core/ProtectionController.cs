@@ -7,15 +7,17 @@ namespace GreenSite.Core.Core;
 /// <summary>
 /// 保护状态机。开启：启动本机端点 → 备份用户代理 → 写 AutoConfigURL → 启动篡改监视。
 /// 关闭/退出：先停监视 → 精确还原用户代理 → 停端点（顺序不可颠倒，否则被误判为篡改）。
+/// 支持开机自启的「无密码启动」：先由外部从 protection.bin 构造配置并 Start()，
+/// 用户解锁后用 Reconfigure 切换到完整配置，复用同一端点，不产生端口冲突。
 /// </summary>
 public sealed class ProtectionController : IDisposable
 {
-    private readonly AppConfig _config;
     private readonly ProxySettings _proxy;
     private readonly LogService _log;
     private readonly int _port;
     private readonly bool _enableGuard;
 
+    private AppConfig _config;
     private Ruleset _ruleset;
     private long _seq;
     private BlockingProxy? _endpoint;
@@ -29,6 +31,7 @@ public sealed class ProtectionController : IDisposable
 
     public string PacUrl => $"http://127.0.0.1:{_port}/proxy.pac?v={_seq}";
     public int Port => _port;
+    public long PacSeq => _seq;
     public LogService Log => _log;
     public int TodayBlockedCount => _log.TodayCount;
     public bool IsActive => _started;
@@ -86,6 +89,24 @@ public sealed class ProtectionController : IDisposable
         _config.ProtectionEnabled = true;
     }
 
+    /// <summary>
+    /// 解锁后把运行中的控制器切换到完整配置（含密码哈希、恢复码哈希）。
+    /// 复用已启动的端点与端口，只更新规则集 / PAC；绝不二次 Start。
+    /// </summary>
+    public void Reconfigure(AppConfig config, Ruleset ruleset)
+    {
+        // 开机自启阶段的 SafeSnapshot 才是「本次会话真实的原代理值」；
+        // config.bin 里的备份属于上次会话，不能覆盖它，否则退出时会还原过期的代理设置。
+        var liveBackup = _config.ProxyBackup;
+        _config = config;
+        config.ProxyBackup = liveBackup ?? config.ProxyBackup;
+        config.Port = _port;
+        config.PacSeq = Math.Max(_seq, config.PacSeq);
+        _seq = config.PacSeq;
+        ApplyRules(ruleset);
+        config.ProtectionEnabled = _started;
+    }
+
     /// <summary>读取系统手动代理（加速器）并带入 PAC；变化则递增 seq 强制刷新。</summary>
     public void RefreshUpstream()
     {
@@ -140,12 +161,16 @@ public sealed class ProtectionController : IDisposable
         _proxy.ApplyAutoConfigUrl(PacUrl);
     }
 
-    /// <summary>规则变更（含组开关、单条开关）：重建规则集并递增 PAC 版本，强制浏览器刷新。</summary>
+    /// <summary>
+    /// 规则变更（含组开关、单条开关、白名单时段）：重建规则集、同步端点判定引擎、
+    /// 递增 PAC 版本强制浏览器刷新。
+    /// </summary>
     public void ApplyRules(Ruleset ruleset)
     {
         _ruleset = ruleset;
         _seq++;
         _config.PacSeq = _seq;
+        _endpoint?.ApplyRules(ruleset); // 端点判定必须与 PAC 同步，否则会出现日志 allow / 不弹拦截提示
         if (!_started) return;
         _guard?.SetExpected(PacUrl);
         _guard?.Suppress(TimeSpan.FromSeconds(3));

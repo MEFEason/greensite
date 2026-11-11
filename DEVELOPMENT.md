@@ -67,11 +67,17 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 - **加速器兼容（PAC 上游跟随）**：PAC 不再写死 DIRECT。检测到系统手动代理（`ProxyEnable=1` + `ProxyServer`）时非黑名单域名跟随该上游（`PROXY host:port`，https 端点优先），白名单同样走上游，`ProxyOverride` 中 `*.域名` 形式例外走 DIRECT；黑名单命中仍 100% 走本机拦截端口。代码入口：`PacGenerator.Generate` 的 `upstream` / `bypass` 参数、`ProxySettings.ReadUpstream` 解析、`ProtectionController.RefreshUpstream` 检测变化并递增 seq 重建 PAC。`AppConfig` 新增 `FollowUpstreamProxy=true`（默认开启）。
 - **退出与关闭只还原 AutoConfigURL**：`ProxySettings.Restore` **只**精确还原 `AutoConfigURL`，绝不写回 `ProxyEnable` / `ProxyServer` 旧快照（否则抹掉保护期间开启的加速器设置）；`RegistryGuard.OnTamper` 先经 `RefreshUpstream` 吸收加速器对同键的正常改动，再判断 `AutoConfigURL` 是否被移走。主窗口关闭行为可配置（托盘继续保护 / 停止拦截退出，需密码）。
 
+## 3.2 v1.0.4 行为变更要点
+
+- **开机自启快照（无密码自动进入防护）**：`config.bin` 由「管理密码派生的 HMAC + DPAPI」加密，冷启动无密码无法解密，旧版 `--minimized` 只把窗口藏到托盘等待解锁，进程起来了但拦截从未开启。新增 `%LOCALAPPDATA%\GreenSite\protection.bin` 启动快照，只含**非敏感**保护数据（分组 / 规则 / 端口 / PAC 版本 / 跟随加速器开关 / 白名单生效时段 / 通知开关），DPAPI(CurrentUser) 加密、**不依赖管理密码**。`AppState.Initialize(autoStartLaunch)` 在自启路径直接加载快照 → 构建规则集 → `ProtectionController.Start()`，无需密码、无需点托盘即进入防护状态；用户随后输密码解锁时复用同一个控制器（`Reconfigure`，不重启端点、不产生端口冲突）。快照绝不含密码 / 恢复码哈希、代理备份等凭据，`config.bin` 安全模型不变；「关闭保护」仅本次会话有效，下次自启重新自动防护。
+- **端点引擎热更新（黑白名单判定修复）**：旧 `BlockingProxy` 持有构造时创建的 `RuleEngine` 旧实例，而 `ProtectionController.ApplyRules` 只更新了 PAC 生成所用的规则集、未同步端点判定引擎——「关闭白名单组 + 开启同域名黑名单」后 PAC 已把域名送到本机拦截端口，端点却仍按初始规则集判为白名单放行，于是日志记 `allow`、界面不弹拦截提示（「拦截气泡 ↔ 日志 ↔ 实际 403」三者不一致）。现 `ApplyRules` 以最新规则集重建端点的 `RuleEngine`（热更新），命中归因字典按 allow / block 分离，黑名单命中记录正确的命中组 / 命中规则，`Blocked` 事件只在 `DecisionKind.Block` 触发。日志字段不变（时间 / Host / 命中组 / 命中规则 / `allow|block`，不含 URL）。
+- **白名单生效时段（`AllowlistSchedule`）**：配置 `AllowlistSchedule { bool Enabled; List<AllowTimeWindow> Windows }`，每个 `AllowTimeWindow` 含 `Start` / `End`（`HH:mm`，24 小时制），支持多个时段与跨午夜。未启用或时段为空时全天生效（旧行为一致），启用且有合法时段时仅落在任一时段内才放行，时段外白名单整体失效并回退常规拦截判定；与 `Ruleset` 的分组开关 / 单条开关同时生效（组开关 ∧ 单条开关 ∧ 时段判定）。时段配置随 `Ruleset` 一起绑定到 PAC 与端点两端：PAC 脚本内置 `gsAllowActive()` 用浏览器端 `new Date()` 实时判断（**不能依赖服务端定时重建 PAC**，浏览器缓存会使时段切换滞后），服务端 `RuleEngine` 用本机 `TimeOnly` 同步判断，两端共用同一份配置、判定一致。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **97 条断言 / 8 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **151 条断言 / 11 组用例**：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表
@@ -162,6 +168,9 @@ GreenSite/
 | 托盘图标必须 `.ico` 路径 | `NotifyIcon` 只接受 `.ico` 文件；用 `assets/app.ico`（多尺寸 ICO，由 `gen_logo.py` 生成），不要用 `.png` / `.svg`。 |
 | 禁止按进程名结束进程 | 安装/卸载不得 `taskkill`，会误杀宿主进程；程序用命名 Mutex 自行处理单实例与退出。 |
 | `SecureConfigStore.Save` 第二参数已可选 | v1.0.1 起第二参数是可选的 `secretForInit`（仅首次设密 / 恢复码轮换等需要下发 DPAPI 密钥的场景传入），日常保存配置直接调用 `Save(config)` 即可，不要误以为必须传密钥。 |
+| `BlockingProxy` 的 `RuleEngine` 不能在构造后固定 | 端点判定引擎若只在构造时创建一次，`ApplyRules` 更新 PAC 规则集后端点仍用旧规则判定，导致 PAC 已分流到拦截端口、端点却按旧白名单放行（日志 `allow`、无拦截气泡）。规则变更时必须以最新规则集同步重建端点 `RuleEngine`。 |
+| 无密码启动快照绝不能写入凭据 | `protection.bin` 不依赖管理密码即可解密，仅用于冷启动重建保护；**绝不能**写入密码哈希 / 恢复码哈希 / 代理备份等敏感字段，否则等于开了无密码读取凭据的口子。凭据只存于 `config.bin`，其安全模型不变。 |
+| 时段切换不能靠服务端定时重建 PAC | 浏览器会缓存 PAC 脚本，服务端定时重建（递增 seq）无法保证时段切换即时生效；PAC 内须用 `gsAllowActive()` + `new Date()` 实时判断当前时间，服务端 `RuleEngine` 用 `TimeOnly` 同步判定，两端共用同一份时段配置。 |
 
 ## 8. 发布流程
 

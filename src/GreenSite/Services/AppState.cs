@@ -12,6 +12,10 @@ namespace GreenSite.Services;
 /// 应用状态单例。集中持有配置、规则集、加密仓库、密码门禁、日志、保护控制器、
 /// 编辑解锁状态与会话密码。会话密码只以 <see cref="SecureString"/> 驻留内存，
 /// 绝不写文件、日志或异常消息；需要传给 Core 时临时转 string，用后不持久化。
+///
+/// 开机自启：config.bin 依赖管理密码解密，冷启动无密码无法读取，故另用
+/// protection.bin（DPAPI 无密码快照）在 Initialize 阶段直接启动防护；
+/// 用户解锁时复用同一控制器，不重启端点。
 /// </summary>
 public sealed class AppState
 {
@@ -19,15 +23,17 @@ public sealed class AppState
 
     private readonly string _configDirectory;
     private SecureConfigStore? _store;
+    private ProtectionSnapshotStore? _snapshotStore;
     private AppConfig? _config;
     private Ruleset? _ruleset;
     private ProtectionController? _controller;
     private SecureString? _sessionPassword;
     private DispatcherTimer? _editLockTimer;
+    private bool _autoProtectionStarted;
 
     private AppState()
     {
-        // %LOCALAPPDATA%\GreenSite\config.bin
+        // %LOCALAPPDATA%\GreenSite\config.bin / protection.bin
         _configDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "GreenSite");
@@ -45,6 +51,8 @@ public sealed class AppState
     public bool IsExiting { get; private set; }
     /// <summary>配置是否已解密并进入主界面。</summary>
     public bool IsUnlocked { get; private set; }
+    /// <summary>本次会话是否由开机自启快照启动防护，且尚未解锁。</summary>
+    public bool IsAutoProtectionActive => _autoProtectionStarted && IsProtectionActive;
     /// <summary>本次会话是否由恢复码解锁、尚未重设管理密码（须强制重设）。</summary>
     public bool NeedPasswordReset { get; private set; }
     /// <summary>规则编辑模式是否解锁（会话内一次解锁，超时或隐藏到托盘自动锁定）。</summary>
@@ -58,11 +66,53 @@ public sealed class AppState
     public event Action? EditLockChanged;
     public event Action? BeforeExit;
 
-    /// <summary>应用启动时调用，判断首次运行。</summary>
-    public void Initialize()
+    /// <summary>
+    /// 应用启动时调用。
+    /// </summary>
+    /// <param name="autoStartLaunch">
+    /// 是否由开机自启（--minimized）拉起。为 true 时从无密码 DPAPI 快照直接构建规则集并
+    /// 启动防护，无需密码、无需用户点击托盘；这是「开机自启」的明确预期行为。
+    /// </param>
+    public void Initialize(bool autoStartLaunch = false)
     {
         _store = new SecureConfigStore(_configDirectory);
+        _snapshotStore = new ProtectionSnapshotStore(_configDirectory);
         IsFirstRun = !_store.Exists;
+        if (IsFirstRun || !autoStartLaunch) return;
+
+        var snapshot = _snapshotStore.TryLoad();
+        if (snapshot is null) return; // 旧版配置 / 快照损坏 → 退化为「解锁后开启」，不阻塞启动
+
+        try
+        {
+            var config = snapshot.ToConfig();
+            _config = config;
+            _ruleset = Ruleset.Build(config.Groups, config.Rules, config.AllowlistSchedule);
+            _controller = new ProtectionController(config, _ruleset);
+            _controller.Blocked += OnControllerBlocked;
+            _controller.Start();
+
+            _autoProtectionStarted = true;
+            config.Port = _controller.Port;
+            config.PacSeq = _controller.PacSeq;
+            WriteSnapshot(config);
+            StateChanged?.Invoke();
+        }
+        catch
+        {
+            // 端口占用 / 注册表异常等：不弹错、不阻塞 UI，退化为解锁后开启
+            _controller = null;
+            _config = null;
+            _ruleset = null;
+            _autoProtectionStarted = false;
+        }
+    }
+
+    /// <summary>写无密码启动快照。失败不影响主配置保存。</summary>
+    private void WriteSnapshot(AppConfig config)
+    {
+        try { _snapshotStore?.Save(ProtectionSnapshot.FromConfig(config)); }
+        catch { /* 快照是加速路径，不是唯一数据源 */ }
     }
 
     // ── 密码处理 ──────────────────────────────────────────────
@@ -78,11 +128,38 @@ public sealed class AppState
 
     private string SessionPassword() => Reveal(_sessionPassword!);
 
+    /// <summary>
+    /// 把解密后的完整配置绑定到保护控制器。
+    /// 开机自启已在运行时：复用端点（Reconfigure），绝不二次 Start，避免端口冲突与重复写注册表。
+    /// </summary>
+    private void BindLoadedConfig(AppConfig config)
+    {
+        if (_controller is { IsActive: true } && _autoProtectionStarted)
+            config.Port = _controller.Port;
+        config.PacSeq = _controller?.PacSeq ?? config.PacSeq;
+        config.ProtectionEnabled = _controller?.IsActive ?? config.ProtectionEnabled;
+
+        _config = config;
+        _ruleset = Ruleset.Build(config.Groups, config.Rules, config.AllowlistSchedule);
+
+        if (_controller is null)
+        {
+            _controller = new ProtectionController(config, _ruleset);
+            _controller.Blocked += OnControllerBlocked;
+        }
+        else
+        {
+            _controller.Reconfigure(config, _ruleset);
+        }
+
+        if (!_controller.IsActive && config.ProtectionEnabled) _controller.Start();
+    }
+
     // ── 首次运行：设置管理密码 + 生成恢复码 ───────────────────
     /// <summary>
-    /// 生成 6 组默认规则 → 生成恢复码并写入 RecoveryHash/Salt → 构造配置 → 启动保护 →
+    /// 生成默认规则 → 生成恢复码并写入 RecoveryHash/Salt → 构造配置 → 启动保护 →
     /// 加密保存（Save 内自动写入密码哈希与盐）。保存安排在 Start 之后，以一并持久化
-    /// Port / ProxyBackup / ProtectionEnabled。
+    /// Port / ProxyBackup / ProtectionEnabled，并同步写无密码启动快照。
     /// 返回值 = 恢复码明文，由调用方（LockPage）显示一次让用户抄录，绝不落盘。
     /// </summary>
     public string CompleteFirstRun(SecureString password)
@@ -99,12 +176,13 @@ public sealed class AppState
             config.RecoveryHash = rHash;
             config.RecoverySalt = rSalt;
             _config = config;
-            _ruleset = Ruleset.Build(groups, rules);
+            _ruleset = Ruleset.Build(groups, rules, config.AllowlistSchedule);
             _controller = new ProtectionController(config, _ruleset);
             _controller.Blocked += OnControllerBlocked;
             _controller.Start();
 
             _store!.Save(config, plain);
+            WriteSnapshot(config);
             _sessionPassword = password.Copy();
             IsUnlocked = true;
             IsEditUnlocked = false; // 规则编辑默认锁定，需再次验证密码进入编辑模式
@@ -124,7 +202,7 @@ public sealed class AppState
 
     // ── 之后启动：输入密码解锁 ────────────────────────────────
     /// <summary>
-    /// 冷启动 UI 锁定，但解锁成功后保护自动开启（无需手动点开启）。
+    /// 输入密码解锁。若开机自启已自动进入防护状态，则保持端点不中断、只同步完整配置。
     /// 失败由 SecureConfigStore.Load 抛 ConfigCorruptedException，消息统一为 UnifiedError。
     /// 不提供任何无密码重置入口。
     /// </summary>
@@ -134,17 +212,13 @@ public sealed class AppState
         try
         {
             var config = _store!.Load(plain);
-            _config = config;
-            _ruleset = Ruleset.Build(config.Groups, config.Rules);
-            _controller = new ProtectionController(config, _ruleset);
-            _controller.Blocked += OnControllerBlocked;
+            BindLoadedConfig(config);
             _sessionPassword = password.Copy();
-            _controller.Start();
             IsUnlocked = true;
             IsEditUnlocked = false;
             NeedPasswordReset = false;
 
-            SaveConfig(); // 持久化 ProtectionEnabled / ProxyBackup / Port
+            SaveConfig(); // 持久化 ProtectionEnabled / ProxyBackup / Port + 启动快照
             ThemeService.Apply(config.Theme);
             StateChanged?.Invoke();
             RulesChanged?.Invoke();
@@ -164,11 +238,7 @@ public sealed class AppState
     public void UnlockWithRecoveryCode(string code)
     {
         var config = _store!.LoadWithRecoveryCode(RecoveryCode.Normalize(code)!);
-        _config = config;
-        _ruleset = Ruleset.Build(config.Groups, config.Rules);
-        _controller = new ProtectionController(config, _ruleset);
-        _controller.Blocked += OnControllerBlocked;
-        _controller.Start();
+        BindLoadedConfig(config);
         IsUnlocked = true;
         IsEditUnlocked = false;
         NeedPasswordReset = true; // 调用方须立即引导重设密码
@@ -200,6 +270,12 @@ public sealed class AppState
             Config.RecoverySalt = rSalt;
 
             _store!.Save(Config, plain); // 用新密码重新加密并重新签名
+            if (_controller is not null)
+            {
+                Config.Port = _controller.Port;
+                Config.PacSeq = _controller.PacSeq;
+            }
+            WriteSnapshot(Config);
             _sessionPassword?.Dispose();
             _sessionPassword = newPassword.Copy();
             NeedPasswordReset = false;
@@ -233,15 +309,16 @@ public sealed class AppState
     {
         if (_config is null || _sessionPassword is null || _controller is null) return;
         _config.Port = _controller.Port; // 保存前确保 controller.Port 已写入 config
-        var plain = SessionPassword();
-        _store!.Save(_config, plain);
+        _config.PacSeq = _controller.PacSeq;
+        _store!.Save(_config, SessionPassword());
+        WriteSnapshot(_config);
     }
 
-    // ── 规则变更（含组开关、单条开关、增删改、跨组移动）──────
+    // ── 规则变更（含组开关、单条开关、白名单时段、增删改、跨组移动）──
     public void RefreshRules()
     {
-        _ruleset = Ruleset.Build(Config.Groups, Config.Rules);
-        _controller!.ApplyRules(_ruleset);
+        _ruleset = Ruleset.Build(Config.Groups, Config.Rules, Config.AllowlistSchedule);
+        _controller!.ApplyRules(_ruleset); // 同步端点判定引擎 + 重建 PAC
         SaveConfig();
         RulesChanged?.Invoke();
         StateChanged?.Invoke();
@@ -256,7 +333,7 @@ public sealed class AppState
         StateChanged?.Invoke();
     }
 
-    /// <summary>关闭保护（需密码验证后调用）：解除拦截，进程保留。</summary>
+    /// <summary>关闭保护（需密码验证后调用）：解除拦截，进程保留。仅本次会话有效，下次自启会重新自动防护。</summary>
     public void CloseProtection()
     {
         _controller!.StopProtection();
@@ -268,7 +345,7 @@ public sealed class AppState
     /// 退出程序统一入口（所有 UI 出口都调它，决策只此一处）：
     /// - 恢复码解锁但未重设：身份已由恢复码验证，再要旧密码会僵局 → 确认框后直接退出（本次会话不保存）；
     /// - 已解锁：密码验证（RequirePassword）通过后退出；
-    /// - 未解锁（含首启页）：拦截未开启、无残留 → 确认后直接退出。
+    /// - 未解锁（含首启页、开机自启）：拦截未开启或已由 Shutdown 精确还原 → 确认后直接退出。
     /// </summary>
     public void RequestExit()
     {
@@ -288,7 +365,9 @@ public sealed class AppState
             return;
         }
         var ans = System.Windows.MessageBox.Show(
-            "退出程序？（尚未完成设置，不会产生任何拦截残留）",
+            _autoProtectionStarted
+                ? "退出程序？开机自启已自动开启防护，退出后将停止拦截并还原代理设置。"
+                : "退出程序？（尚未完成设置，不会产生任何拦截残留）",
             "退出程序",
             System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Question);
@@ -303,6 +382,8 @@ public sealed class AppState
         IsExiting = true;
         try { _controller?.Shutdown(); } catch { /* 退出路径不再上抛 */ }
         try { SaveConfig(); } catch { /* 同上；无配置时 SaveConfig 内部直接返回 */ }
+        // 自启未解锁时没有会话密码，也要把「本次已正常退出」写进快照，避免状态漂移
+        if (_config is not null && _sessionPassword is null) WriteSnapshot(_config);
         BeforeExit?.Invoke();
         _sessionPassword?.Dispose();
         _sessionPassword = null;
@@ -346,6 +427,7 @@ public sealed class AppState
             Config.PasswordHash = hash;
             Config.PasswordSalt = salt;
             _store!.Save(Config, plain); // 用新密码 + 新盐重新加密并重新签名
+            WriteSnapshot(Config);
             _sessionPassword?.Dispose();
             _sessionPassword = newPassword.Copy();
         }
@@ -469,5 +551,17 @@ public sealed class AppState
     {
         Config.AutoStart = enabled;
         SaveConfig();
+    }
+
+    /// <summary>
+    /// 供设置页保存白名单生效时段：规范化 → 写配置 → 重建规则集（同步端点引擎与 PAC）→ 持久化。
+    /// 时段外的白名单自动失效并回退常规拦截判定，由 RuleEngine / PacGenerator 共同保证。
+    /// </summary>
+    public void SetAllowlistSchedule(AllowlistSchedule schedule)
+    {
+        schedule ??= new AllowlistSchedule();
+        schedule.Normalize();
+        Config.AllowlistSchedule = schedule;
+        RefreshRules();
     }
 }

@@ -44,12 +44,15 @@ public partial class App : System.Windows.Application
         _listening = true;
         _ = Task.Run(ListenShowRequests);
 
-        AppState.Instance.Initialize();
+        // 开机自启（--minimized）：先用无密码 DPAPI 快照直接启动防护，再创建主窗口。
+        // Initialize 必须早于 MainWindow 构造，托盘与页面才能读到真实的保护状态。
+        var minimized = e.Args is not null && System.Array.Exists(e.Args, a => a == "--minimized");
+        AppState.Instance.Initialize(autoStartLaunch: minimized);
 
         var window = new MainWindow();
         MainWindow = window;
 
-        if (e.Args is not null && System.Array.Exists(e.Args, a => a == "--minimized"))
+        if (minimized)
         {
             // 开机自启：主窗口先隐藏到托盘，用户点击托盘打开后解锁
             window.StartMinimized();

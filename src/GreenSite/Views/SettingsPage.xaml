@@ -58,6 +58,33 @@
                 </StackPanel>
             </Border>
 
+            <!-- 白名单生效时段 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="白名单生效时段" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="AllowScheduleCheck" Content="仅在指定时段内放行白名单域名（24 小时制）"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="AllowSchedule_Changed" Unchecked="AllowSchedule_Changed" />
+                    <TextBlock Text="启用后，白名单只在下列时段生效；时段外自动失效并回退到常规拦截判定（命中黑名单则拦截）。未启用或列表为空时白名单全天生效。支持跨午夜时段，例如 22:00–06:00。此设置与白名单分组开关、单条开关同时生效。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,8,0,0" />
+
+                    <StackPanel x:Name="ScheduleRows" Margin="0,12,0,0" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="AddWindowButton" Content="添加时段" Click="AddWindow_Click"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button x:Name="ApplyScheduleButton" Content="保存时段设置" Click="ApplySchedule_Click"
+                                Style="{StaticResource PrimaryButtonStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="ScheduleError" Style="{StaticResource BodyTextStyle}"
+                               Margin="0,8,0,0" Visibility="Collapsed"
+                               Foreground="{DynamicResource WarnForeground}" />
+                    <TextBlock x:Name="ScheduleSummary" Style="{StaticResource MutedTextStyle}"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- 窗口与退出 -->
             <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
                 <StackPanel>

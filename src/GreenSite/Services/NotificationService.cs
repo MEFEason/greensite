@@ -28,7 +28,8 @@ public sealed class NotificationService
 
     private void OnBlocked(object? sender, BlockLogEntry entry)
     {
-        if (!AppState.Instance.IsUnlocked) return;
+        // 开机自启无需密码即进入防护状态；此时 IsUnlocked=false 但拦截真实发生，
+        // 不能因未解锁而吞掉提示，否则「界面提示 ↔ 日志 block」不一致。
         if (entry.Whitelisted) return; // 白名单放行不弹「已拦截」
         Show(entry);
     }

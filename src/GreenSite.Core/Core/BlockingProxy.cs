@@ -8,6 +8,7 @@ namespace GreenSite.Core.Core;
 /// <summary>
 /// 本机单端口端点：既提供 PAC 脚本，也承接被分流过来的拦截流量。
 /// 只绑定 127.0.0.1、只读请求首行、不建隧道、不解密 TLS。
+/// 判定引擎可热更新：规则变更后必须同步重建，否则端点会一直使用启动时的旧规则集。
 /// </summary>
 public sealed class BlockingProxy : IDisposable
 {
@@ -15,10 +16,10 @@ public sealed class BlockingProxy : IDisposable
     private static readonly UTF8Encoding Utf8 = new(false);
 
     private readonly int _port;
-    private readonly RuleEngine _engine;
     private readonly LogService _log;
     private readonly Func<string> _pacProvider;
 
+    private RuleEngine _engine;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private int _active;
@@ -35,6 +36,10 @@ public sealed class BlockingProxy : IDisposable
         _log = log;
         _pacProvider = pacProvider;
     }
+
+    /// <summary>规则变更后重建判定引擎（Volatile 保证跨线程可见）。</summary>
+    public void ApplyRules(Ruleset ruleset) =>
+        Volatile.Write(ref _engine, new RuleEngine(ruleset));
 
     public void Start()
     {
@@ -94,14 +99,19 @@ public sealed class BlockingProxy : IDisposable
             var target = firstLine.Split(' ').Skip(1).FirstOrDefault() ?? "";
             var url = target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? target : null;
             var host = ExtractHost(firstLine, target);
-            var decision = _engine.Evaluate(host, url);
+            var decision = Volatile.Read(ref _engine).Evaluate(host, url);
 
-            var entry = new BlockLogEntry(
-                DateTimeOffset.Now, decision.Host,
-                decision.GroupName ?? "", decision.RuleValue ?? "",
-                decision.Kind == DecisionKind.Allow);
-            _log.Append(entry);
-            Blocked?.Invoke(this, entry);
+            // Direct 不该到达本机端点（PAC 不会分流），不记日志以免虚增计数。
+            // Blocked 事件只在真正拦截时触发，保证「界面提示 ↔ 日志 block ↔ 403」一致。
+            if (decision.Kind != DecisionKind.Direct)
+            {
+                var entry = new BlockLogEntry(
+                    DateTimeOffset.Now, decision.Host,
+                    decision.GroupName ?? "", decision.RuleValue ?? "",
+                    decision.Kind == DecisionKind.Allow);
+                _log.Append(entry);
+                if (decision.Kind == DecisionKind.Block) Blocked?.Invoke(this, entry);
+            }
             await WriteForbiddenAsync(stream, decision.Host, decision.GroupName, timeout.Token);
         }
         catch { /* 单个连接失败不影响服务 */ }
@@ -137,7 +147,7 @@ public sealed class BlockingProxy : IDisposable
                    "<h1>访问被 GreenSite 限制</h1>" +
                    $"<p>域名：{WebUtility.HtmlEncode(host)}</p>" +
                    $"<p>命中分组：{WebUtility.HtmlEncode(group ?? "-")}</p>" +
-                   "<p>如需放行，请在 GreenSite 中用管理密码将该域名加入白名单。</p>" +
+                   "<p>如需放行，请在 GreenSite 中用管理密码将该域名加入白名单或调整生效时段。</p>" +
                    "</body></html>";
         var body = Utf8.GetBytes(html);
         var header = Encoding.ASCII.GetBytes(

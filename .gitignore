@@ -19,6 +19,9 @@ TestResults/
 **/secrets*
 config.bin
 config.bak
+protection.bin
+protection.bin.tmp
+config.bak
 .version.ini
 LICENSE.rtf
 *.sha256

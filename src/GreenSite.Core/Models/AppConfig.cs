@@ -34,6 +34,9 @@ public sealed class AppConfig
     /// <summary>用户原代理快照之外，记录是否跟随加速器：auto=检测到系统手动代理则非黑名单域名走该代理。</summary>
     public bool FollowUpstreamProxy { get; set; } = true;
 
+    /// <summary>白名单生效时间段（24 小时制）。未启用时白名单全天生效。</summary>
+    public AllowlistSchedule AllowlistSchedule { get; set; } = new();
+
     /// <summary>用户原代理设置快照，解除保护时精确还原。</summary>
     public ProxyBackup? ProxyBackup { get; set; }
 }
