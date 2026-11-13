@@ -167,6 +167,7 @@ public partial class MainWindow : Window
     private void UpdateStatusUI()
     {
         var s = AppState.Instance;
+        UpdateProtectionToggle(); // 状态栏按钮与状态总览卡片共用同一门禁决策（AppState.ProtectionToggleUi）
         if (!s.IsUnlocked)
         {
             // 开机自启无需密码即进入防护状态：界面提示必须与实际拦截一致
@@ -208,6 +209,20 @@ public partial class MainWindow : Window
 
         TodayBlockedText.Text = $"今日拦截 {s.Controller.TodayBlockedCount} 次";
         UpdateTrayText();
+    }
+
+    /// <summary>状态栏快捷开关：按钮只负责发起，门禁与密码验证统一在 AppState.ToggleProtection。</summary>
+    private void ProtectionToggle_Click(object sender, RoutedEventArgs e) =>
+        AppState.Instance.ToggleProtection();
+
+    private void UpdateProtectionToggle()
+    {
+        var (label, enabled) = AppState.Instance.ProtectionToggleUi();
+        ProtectionToggleButton.Content = label;
+        ProtectionToggleButton.IsEnabled = enabled;
+        ProtectionToggleButton.ToolTip = enabled
+            ? "开启或关闭防护（需管理密码）；与托盘菜单一致"
+            : "防护由开机自启自动开启，请先在主界面输入管理密码解锁";
     }
 
     private void UpdateTrayText()
@@ -294,10 +309,7 @@ public partial class MainWindow : Window
     {
         var s = AppState.Instance;
         if (!s.IsUnlocked) { ShowMainWindow(); return; }
-        if (s.IsProtectionActive)
-            s.RequirePassword("关闭保护", () => s.CloseProtection());
-        else
-            s.RequirePassword("开启保护", () => s.StartProtection());
+        s.ToggleProtection(); // 托盘与主界面状态栏共用同一套门禁和密码验证
     }
 
     private void OnTrayGroupClick(object? sender, System.EventArgs e)

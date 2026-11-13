@@ -3,7 +3,7 @@
 ## 提交前检查
 
 - `dotnet build -c Release` **0 error**；或跑完整流水线 `scripts/build.ps1`
-- `scripts/selftest.ps1` **13 组用例 173 条全绿**
+- `scripts/selftest.ps1` **14 组用例 181 条全绿**
 - `scripts/verify_product.ps1`（只读体检）通过
 - 未提交任何凭据：`*.pfx`、`*.key`、`*.p12`、`*.pem`、`*.snk`、`config.bin`、`config.bak`、token、密码
 - 未提交构建产物与运行期数据：`bin/`、`obj/`、`outputs/`、`dist/`、`.version.ini`、`*.log`

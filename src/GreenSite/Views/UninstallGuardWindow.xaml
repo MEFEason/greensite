@@ -1,22 +1,33 @@
 <Window x:Class="GreenSite.Views.UninstallGuardWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="卸载 GreenSite" Height="280" Width="440"
+        Title="卸载 GreenSite" Width="470" MinHeight="300" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="{DynamicResource WindowBackground}">
-    <StackPanel Margin="24">
-        <TextBlock Text="卸载需要验证管理密码" Style="{StaticResource SectionTitleStyle}" />
-        <TextBlock Text="继续卸载前必须输入管理密码。验证通过后才执行卸载；验证失败或取消会立即退出卸载程序，不会删除任何文件、也不会更改系统设置。"
-                   Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,10,0,0" />
-        <TextBlock Text="管理密码" Style="{StaticResource BodyTextStyle}" Margin="0,20,0,4" />
-        <PasswordBox x:Name="PwdBox" Style="{StaticResource InputPasswordBoxStyle}" />
-        <TextBlock Text="若忘记管理密码，可在程序锁定页用恢复码解锁后重设密码，再回来卸载。"
-                   Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,10,0,0" />
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-            <Button Content="取消" Style="{StaticResource SecondaryButtonStyle}"
-                    Margin="0,0,8,0" Click="Cancel_Click" />
-            <Button x:Name="OkButton" Content="验证并继续" Style="{StaticResource PrimaryButtonStyle}"
+    <!-- 窗口高度随内容自适应 + 按钮固定在 DockPanel 底部。
+         旧版用固定 Height=280 配单个 StackPanel：在 125% DPI 或说明文字换行变多时，
+         底部按钮会被窗口下边缘裁掉，只剩一条彩色背景，看起来像按钮显示异常。 -->
+    <DockPanel Margin="24" LastChildFill="True">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button x:Name="CancelButton" Content="取消" MinWidth="92"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Foreground="{DynamicResource TextPrimary}"
+                    Margin="0,0,10,0" Click="Cancel_Click" IsCancel="True" />
+            <Button x:Name="OkButton" Content="验证并继续" MinWidth="112"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Foreground="White"
                     Click="Ok_Click" IsDefault="True" />
         </StackPanel>
-    </StackPanel>
+
+        <StackPanel>
+            <TextBlock Text="卸载需要验证管理密码" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="继续卸载前必须输入管理密码。验证通过后才执行卸载；验证失败或取消会立即退出卸载程序，不会删除任何文件、也不会更改系统设置。"
+                       Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,10,0,0" />
+            <TextBlock Text="管理密码" Style="{StaticResource BodyTextStyle}" Margin="0,20,0,4" />
+            <PasswordBox x:Name="PwdBox" Style="{StaticResource InputPasswordBoxStyle}" />
+            <TextBlock Text="若忘记管理密码，可在程序锁定页用恢复码解锁后重设密码，再回来卸载。"
+                       Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,10,0,0" />
+        </StackPanel>
+    </DockPanel>
 </Window>

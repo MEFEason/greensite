@@ -743,6 +743,38 @@ internal static class Program
             try { System.IO.Directory.Delete(guardDir, recursive: true); } catch { }
         }
 
+        // ── 用例 14：主界面状态栏快捷开关状态矩阵 ──
+        var tbActive = AccessPolicy.ToggleProtectionButton(false, true, true, false);
+        Check("状态栏按钮：已解锁且防护中显示关闭防护",
+            tbActive.Label == "关闭防护" && tbActive.Enabled);
+        var tbIdle = AccessPolicy.ToggleProtectionButton(false, true, false, false);
+        Check("状态栏按钮：已解锁且防护关闭显示开启防护",
+            tbIdle.Label == "开启防护" && tbIdle.Enabled);
+        var tbLocked = AccessPolicy.ToggleProtectionButton(false, false, true, false);
+        Check("状态栏按钮：自启未解锁禁用并提示需先解锁",
+            tbLocked.Label == "需先解锁" && !tbLocked.Enabled);
+        var tbCold = AccessPolicy.ToggleProtectionButton(false, false, false, false);
+        Check("状态栏按钮：普通冷启动不误禁用", tbCold.Label == "开启防护" && tbCold.Enabled);
+        var tbFirst = AccessPolicy.ToggleProtectionButton(true, false, false, false);
+        Check("状态栏按钮：首启不误禁用", tbFirst.Enabled);
+        var tbReset = AccessPolicy.ToggleProtectionButton(false, true, true, true);
+        Check("状态栏按钮：恢复码解锁未重设仍可切换（僵局豁免）", tbReset.Enabled);
+
+        var toggleConsistent = true;
+        foreach (var fr in new[] { false, true })
+            foreach (var un in new[] { false, true })
+                foreach (var act in new[] { false, true })
+                    foreach (var nr in new[] { false, true })
+                    {
+                        var b = AccessPolicy.ToggleProtectionButton(fr, un, act, nr);
+                        var can = AccessPolicy.CanStopProtection(fr, un, act, nr);
+                        if (b.Enabled != can) toggleConsistent = false;
+                        if (can && b.Label != (act ? "关闭防护" : "开启防护")) toggleConsistent = false;
+                    }
+        Check("状态栏按钮：16 种状态组合与门禁完全一致", toggleConsistent);
+        Check("状态栏按钮：禁用态不可绕过停止拦截",
+            !tbLocked.Enabled && !AccessPolicy.CanStopProtection(false, false, true, false));
+
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");
         return _fail == 0 ? 0 : 1;
     }

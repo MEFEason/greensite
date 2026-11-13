@@ -58,6 +58,13 @@
                         </Border>
                         <TextBlock x:Name="TodayBlockedText" Text="今日拦截 0 次" Margin="0,10,0,0"
                                    Style="{StaticResource MutedTextStyle}" />
+                        <!-- 状态栏快捷开关：功能与托盘菜单一致，无需每次回到托盘切换防护 -->
+                        <Button x:Name="ProtectionToggleButton" Content="关闭防护"
+                                Margin="0,12,0,0" MinWidth="132" Padding="10,6"
+                                HorizontalAlignment="Left"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="ProtectionToggle_Click"
+                                ToolTip="开启或关闭防护（需管理密码）；与托盘菜单一致" />
                     </StackPanel>
                 </DockPanel>
             </Border>

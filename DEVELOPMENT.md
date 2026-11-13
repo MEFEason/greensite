@@ -79,11 +79,16 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 - **卸载管理密码门禁（`UninstallGuard` + Inno `InitializeUninstall`）**：卸载器在最早阶段以 `--verify-uninstall` 启动主程序；`App.OnStartup` **必须在创建单实例 Mutex 之前分流**，否则正在运行的 GreenSite 会让第二实例直接 Shutdown、卸载器拿不到退出码。验证窗口 `UninstallGuardWindow` 用 `UninstallGuard.Verify(SecureString)` 走 `SecureConfigStore.Load` 完整链路，进程退出码 0/1 交给 Inno；`InitializeUninstall` 返回 False 立即终止卸载并用 `MsgBox` 显示失败提示。密码不进命令行、不落盘；`config.bin` 不存在（从未设密）时放行卸载。自检用例 13 覆盖正确 / 错误 / 空密码 / 篡改配置 / 无配置。
 - **只读体检新增安装器静态检查**：`verify_product.ps1` 第 10 项校验 `setup.iss` 含 `InitializeUninstall` / `--verify-uninstall` / `ResultCode <> 0` / `MsgBox` / `Result := False`，防止未来误删卸载门禁。
 
+## 3.4 v1.0.6 行为变更要点
+
+- **主界面状态栏防护快捷开关**：左侧状态栏与「状态总览 → 当前状态」卡片各加一枚按钮，点击统一调 `AppState.ToggleProtection()`（门禁判定 + `RequirePassword` + `StartProtection` / `CloseProtection`）；托盘菜单的 `ToggleProtectionFromTray` 也收敛到同一入口，避免三处各写一份条件导致口径漂移。按钮文案与可用状态由 Core 纯逻辑 `AccessPolicy.ToggleProtectionButton` 返回，UI 只负责显示；自启未解锁时显示「需先解锁」并禁用，与托盘门禁一致。自检用例 14 覆盖 16 种状态组合。
+- **卸载验证窗口按钮裁切修复**：旧版 `UninstallGuardWindow` 用固定 `Height="280"` + 单个 `StackPanel`，在 125% DPI 或说明文字换行变多时内容溢出，底部「取消 / 验证并继续」被窗口下边缘裁掉，只剩一条彩色背景。改为 `SizeToContent="Height"` + `MinHeight` + `DockPanel`（按钮 `DockPanel.Dock="Bottom"`），并给两个按钮设 `MinWidth` 与显式 `Foreground`。`verify_product.ps1` 第 11 项静态检查该布局，防止回归。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **173 条断言 / 13 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **181 条断言 / 14 组用例**：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表
@@ -98,6 +103,7 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 11. 开机自启无密码快照（`protection.bin` 往返 / 自动 Active / 解锁复用端点）
 12. 自启未解锁门禁（关闭保护 / 退出 / 关闭窗口仅最小化的状态矩阵）
 13. 卸载管理密码门禁（正确 / 错误 / 空密码 / 篡改配置 / 无配置）
+14. 状态栏快捷开关状态矩阵（16 种门禁组合、文案与可用状态一致性）
 
 失败即退出码 1，`build.ps1` 中止。可单独运行：
 
@@ -185,6 +191,8 @@ GreenSite/
 | 卸载验证必须在单实例 Mutex 之前分流 | `--verify-uninstall` 若走到单实例检查，正在运行的 GreenSite 会让第二实例 Set 事件后直接 `Shutdown()`，卸载器拿不到退出码；`App.OnStartup` 必须最早判断该参数，用 `Dispatcher.BeginInvoke` 弹窗后 `Shutdown(0/1)` 返回退出码。 |
 | 卸载门禁不能只读 `config.bin` 是否存在 | 必须走 `SecureConfigStore.Load` 完整校验（DPAPI + 密码哈希 + HMAC），否则篡改配置或伪造空文件即可绕过；`config.bin` 不存在（从未设密）才放行，避免装了未用却卸不掉。 |
 | 未解锁门禁要留三类豁免 | 首启无配置（否则「设置密码页无法退出」回归）、保护未激活的普通冷启动（退出无拦截可解除）、恢复码解锁未重设态（否则忘记旧密码会形成退出僵局）。判定集中在 `AccessPolicy`，不要在 UI 各处分散写条件。 |
+| 对话框不要用固定 `Height` 配单个 `StackPanel` | 高 DPI 缩放或文案换行变多时内容会溢出，底部按钮被裁切且不会报错。用 `SizeToContent="Height"` + `DockPanel`（按钮固定在 `DockPanel.Dock="Bottom"`），并给按钮设 `MinWidth` 与明确前景色。 |
+| 防护开关不要在各 UI 出口重复写门禁 | 托盘、左侧状态栏、状态总览卡片都调 `AppState.ToggleProtection()`，判定与文案统一来自 `AccessPolicy`；分散写条件会出现「托盘要密码、界面按钮不要密码」这类绕过口。 |
 
 ## 8. 发布流程
 

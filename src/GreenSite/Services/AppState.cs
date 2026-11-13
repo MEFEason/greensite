@@ -349,6 +349,25 @@ public sealed class AppState
         StateChanged?.Invoke();
     }
 
+    /// <summary>主界面状态栏按钮的文案与可用状态（决策在 AccessPolicy 纯逻辑）。</summary>
+    public (string Label, bool Enabled) ProtectionToggleUi() =>
+        AccessPolicy.ToggleProtectionButton(
+            IsFirstRun, IsUnlocked, IsProtectionActive, NeedPasswordReset);
+
+    /// <summary>
+    /// 主界面状态栏开关：与托盘菜单共用同一套门禁。开启 / 关闭均需管理密码；
+    /// 自启未解锁（防护真实在跑）时提示先解锁，禁止绕过门禁停止拦截。
+    /// 切换成功后 StartProtection / CloseProtection 会触发 StateChanged 刷新两处按钮。
+    /// </summary>
+    public void ToggleProtection()
+    {
+        if (IsUnlockRequired) { ShowUnlockRequired(); return; }
+        if (IsProtectionActive)
+            RequirePassword("关闭保护", CloseProtection);
+        else
+            RequirePassword("开启保护", StartProtection);
+    }
+
     /// <summary>自启未解锁时统一提示：敏感操作需先在登录页解锁。</summary>
     private static void ShowUnlockRequired() =>
         System.Windows.MessageBox.Show(

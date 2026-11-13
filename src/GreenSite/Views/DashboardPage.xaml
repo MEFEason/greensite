@@ -16,6 +16,13 @@
                             <TextBlock x:Name="StatePillText" Text="保护中"
                                        Style="{StaticResource PillTextStyle}" />
                         </Border>
+                        <!-- 当前状态卡片内的快捷开关，与左侧状态栏、托盘菜单行为一致 -->
+                        <Button x:Name="ProtectionToggleButton" Content="关闭防护"
+                                Margin="0,12,0,0" MinWidth="120" Padding="10,6"
+                                HorizontalAlignment="Left"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="ProtectionToggle_Click"
+                                ToolTip="开启或关闭防护（需管理密码）" />
                     </StackPanel>
                 </Border>
 

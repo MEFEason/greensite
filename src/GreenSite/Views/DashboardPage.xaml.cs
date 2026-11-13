@@ -19,6 +19,12 @@ public partial class DashboardPage : System.Windows.Controls.UserControl
     public void Refresh()
     {
         var s = AppState.Instance;
+        var (label, enabled) = s.ProtectionToggleUi();
+        ProtectionToggleButton.Content = label;
+        ProtectionToggleButton.IsEnabled = enabled;
+        ProtectionToggleButton.ToolTip = enabled
+            ? "开启或关闭防护（需管理密码）；与托盘菜单一致"
+            : "防护由开机自启自动开启，请先在主界面输入管理密码解锁";
         if (!s.IsUnlocked) return;
 
         var rs = s.Ruleset;
@@ -47,4 +53,8 @@ public partial class DashboardPage : System.Windows.Controls.UserControl
         DisabledGroupCountText.Text = $"已关闭组 {rs.DisabledGroupCount}";
         PacUrlBox.Text = s.Controller.PacUrl;
     }
+
+    /// <summary>状态卡片快捷开关：门禁与密码验证统一在 AppState.ToggleProtection。</summary>
+    private void ProtectionToggle_Click(object sender, System.Windows.RoutedEventArgs e) =>
+        AppState.Instance.ToggleProtection();
 }

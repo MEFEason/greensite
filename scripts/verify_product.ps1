@@ -132,6 +132,36 @@ if (Test-Path -LiteralPath $iss -PathType Leaf) {
 Report $issOk 'setup.iss 含卸载管理密码门禁（失败即终止 + MsgBox）' `
     '缺少 InitializeUninstall / 验证调用 / 失败分支'
 
+# 11. 卸载验证窗口布局：固定 Height 会在高 DPI / 文案换行时裁掉底部按钮，
+#     必须自适应高度且按钮固定在 DockPanel 底部（v1.0.6 修复）。
+$guardXaml = Join-Path $srcDir 'GreenSite\Views\UninstallGuardWindow.xaml'
+$guardOk = $false
+if (Test-Path -LiteralPath $guardXaml -PathType Leaf) {
+    $guardText = Get-Content -LiteralPath $guardXaml -Raw -Encoding UTF8
+    $guardOk = ($guardText -match 'SizeToContent="Height"') -and
+               ($guardText -match 'DockPanel.Dock="Bottom"') -and
+               ($guardText -match 'x:Name="OkButton"') -and
+               ($guardText -match 'x:Name="CancelButton"')
+}
+Report $guardOk '卸载验证窗口按钮完整可见（自适应高度 + 底部固定）' `
+    '缺少 SizeToContent / DockPanel 底部按钮，可能重现按钮裁切'
+
+# 12. 主界面状态栏快捷开关：左侧状态栏与状态总览卡片都必须有按钮并接事件。
+$mainXaml = Join-Path $srcDir 'GreenSite\MainWindow.xaml'
+$dashXaml = Join-Path $srcDir 'GreenSite\Views\DashboardPage.xaml'
+$toggleOk = $false
+if ((Test-Path -LiteralPath $mainXaml -PathType Leaf) -and
+    (Test-Path -LiteralPath $dashXaml -PathType Leaf)) {
+    $mainText = Get-Content -LiteralPath $mainXaml -Raw -Encoding UTF8
+    $dashText = Get-Content -LiteralPath $dashXaml -Raw -Encoding UTF8
+    $toggleOk = ($mainText -match 'x:Name="ProtectionToggleButton"') -and
+                ($mainText -match 'Click="ProtectionToggle_Click"') -and
+                ($dashText -match 'x:Name="ProtectionToggleButton"') -and
+                ($dashText -match 'Click="ProtectionToggle_Click"')
+}
+Report $toggleOk '主界面状态栏含防护快捷开关（状态栏 + 状态总览卡片）' `
+    '缺少 ProtectionToggleButton 或其事件接线'
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "[verify] 共 $($script:failures) 项未通过" -ForegroundColor Red

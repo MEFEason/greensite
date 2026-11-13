@@ -38,4 +38,19 @@ public static class AccessPolicy
         if (needPasswordReset) return true; // 恢复码解锁未重设：确认后可直接退出，避免僵局
         return string.Equals(closeAction, "exit", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// 主界面状态栏「开启 / 关闭防护」快捷按钮的文案与可用状态。
+    /// 与托盘菜单共用同一套门禁：自启未解锁且防护真实在跑时禁用，避免绕过解锁停止拦截；
+    /// 首启、普通冷启动、恢复码解锁未重设三类豁免与 <see cref="CanStopProtection"/> 一致。
+    /// 返回纯数据，便于自检直接覆盖按钮状态矩阵（UI 只负责显示与调用 AppState.ToggleProtection）。
+    /// </summary>
+    public static (string Label, bool Enabled) ToggleProtectionButton(
+        bool isFirstRun, bool isUnlocked, bool isProtectionActive, bool needPasswordReset)
+    {
+        var canToggle = CanStopProtection(
+            isFirstRun, isUnlocked, isProtectionActive, needPasswordReset);
+        if (!canToggle) return ("需先解锁", false);
+        return (isProtectionActive ? "关闭防护" : "开启防护", true);
+    }
 }
