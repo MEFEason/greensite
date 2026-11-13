@@ -22,6 +22,19 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        // 卸载门禁：以 --verify-uninstall 启动的独立验证进程。
+        // 必须在创建单实例 Mutex 之前分流，否则正在运行的 GreenSite 会让第二实例直接退出，
+        // 卸载器拿不到验证结果。此模式不初始化 AppState、不启动防护、不碰注册表与代理设置。
+        if (e.Args is not null && System.Array.Exists(e.Args, a => a == "--verify-uninstall"))
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                var ok = new GreenSite.Views.UninstallGuardWindow().ShowDialog() == true;
+                Shutdown(ok ? 0 : 1); // 退出码交给 Inno 的 InitializeUninstall 判定
+            }));
+            return;
+        }
+
         // ── 单实例：命名 Mutex，第二个实例激活已有窗口后退出 ──
         var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
         if (!createdNew)

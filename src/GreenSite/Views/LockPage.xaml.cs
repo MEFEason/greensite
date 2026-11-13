@@ -46,6 +46,11 @@ public partial class LockPage : System.Windows.Controls.UserControl
             ShowPanel(UnlockPanel);
             RefreshCooldown();
         }
+
+        // 自启未解锁：防护真实在跑，禁止从锁定页直接退出（会绕过统一门禁）。
+        // 隐藏入口而非仅禁用，避免用户点击后无反馈；首启仍保留可退出。
+        if (AppState.Instance.IsUnlockRequired)
+            ExitButton.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>五个面板互斥显示；离开解锁面板时停止冷却计时（UI 不可见时无需刷新）。</summary>

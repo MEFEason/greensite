@@ -73,11 +73,17 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 - **端点引擎热更新（黑白名单判定修复）**：旧 `BlockingProxy` 持有构造时创建的 `RuleEngine` 旧实例，而 `ProtectionController.ApplyRules` 只更新了 PAC 生成所用的规则集、未同步端点判定引擎——「关闭白名单组 + 开启同域名黑名单」后 PAC 已把域名送到本机拦截端口，端点却仍按初始规则集判为白名单放行，于是日志记 `allow`、界面不弹拦截提示（「拦截气泡 ↔ 日志 ↔ 实际 403」三者不一致）。现 `ApplyRules` 以最新规则集重建端点的 `RuleEngine`（热更新），命中归因字典按 allow / block 分离，黑名单命中记录正确的命中组 / 命中规则，`Blocked` 事件只在 `DecisionKind.Block` 触发。日志字段不变（时间 / Host / 命中组 / 命中规则 / `allow|block`，不含 URL）。
 - **白名单生效时段（`AllowlistSchedule`）**：配置 `AllowlistSchedule { bool Enabled; List<AllowTimeWindow> Windows }`，每个 `AllowTimeWindow` 含 `Start` / `End`（`HH:mm`，24 小时制），支持多个时段与跨午夜。未启用或时段为空时全天生效（旧行为一致），启用且有合法时段时仅落在任一时段内才放行，时段外白名单整体失效并回退常规拦截判定；与 `Ruleset` 的分组开关 / 单条开关同时生效（组开关 ∧ 单条开关 ∧ 时段判定）。时段配置随 `Ruleset` 一起绑定到 PAC 与端点两端：PAC 脚本内置 `gsAllowActive()` 用浏览器端 `new Date()` 实时判断（**不能依赖服务端定时重建 PAC**，浏览器缓存会使时段切换滞后），服务端 `RuleEngine` 用本机 `TimeOnly` 同步判断，两端共用同一份配置、判定一致。
 
+## 3.3 v1.0.5 行为变更要点
+
+- **自启未解锁门禁（`AccessPolicy`）**：开机自启以无密码快照自动开启防护，但 `IsUnlocked=false`，旧版仍可从托盘 / 锁定页直接退出或关闭保护，等于绕过解锁停止拦截。现把判定下沉为 Core 纯逻辑 `AccessPolicy.RequiresUnlock(isFirstRun, isUnlocked, isProtectionActive)`；命中时 `AppState.RequestExit` / `CloseProtection` / `StartProtection` 统一提示后拒绝，托盘两项禁用、锁定页退出入口隐藏，`OnWindowClose` 返回 false（关闭窗口仅最小化到托盘）。首启无配置豁免（保留「设置密码页可退出」修复），保护未激活的普通冷启动豁免，恢复码解锁未重设态豁免（避免僵局）。解锁后 `RulesChanged` 会重建托盘菜单恢复可用。自检用例 12 覆盖完整状态矩阵。
+- **卸载管理密码门禁（`UninstallGuard` + Inno `InitializeUninstall`）**：卸载器在最早阶段以 `--verify-uninstall` 启动主程序；`App.OnStartup` **必须在创建单实例 Mutex 之前分流**，否则正在运行的 GreenSite 会让第二实例直接 Shutdown、卸载器拿不到退出码。验证窗口 `UninstallGuardWindow` 用 `UninstallGuard.Verify(SecureString)` 走 `SecureConfigStore.Load` 完整链路，进程退出码 0/1 交给 Inno；`InitializeUninstall` 返回 False 立即终止卸载并用 `MsgBox` 显示失败提示。密码不进命令行、不落盘；`config.bin` 不存在（从未设密）时放行卸载。自检用例 13 覆盖正确 / 错误 / 空密码 / 篡改配置 / 无配置。
+- **只读体检新增安装器静态检查**：`verify_product.ps1` 第 10 项校验 `setup.iss` 含 `InitializeUninstall` / `--verify-uninstall` / `ResultCode <> 0` / `MsgBox` / `Result := False`，防止未来误删卸载门禁。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **151 条断言 / 11 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **173 条断言 / 13 组用例**：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表
@@ -87,6 +93,11 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 6. 拦截端口端到端（PAC / HTTP / CONNECT / 日志脱敏）
 7. 代理设置快照与精确还原（使用临时注册表键，不碰 `Internet Settings`）
 8. 保护状态机（开启 / 规则变更 / 退出恢复代理设置）
+9. 黑白名单切换端到端（端点引擎热更新、日志 `block` / 拦截气泡 / 403 一致）
+10. 白名单生效时段（多时段 / 跨午夜 / 时段外回退 + 端到端）
+11. 开机自启无密码快照（`protection.bin` 往返 / 自动 Active / 解锁复用端点）
+12. 自启未解锁门禁（关闭保护 / 退出 / 关闭窗口仅最小化的状态矩阵）
+13. 卸载管理密码门禁（正确 / 错误 / 空密码 / 篡改配置 / 无配置）
 
 失败即退出码 1，`build.ps1` 中止。可单独运行：
 
@@ -171,6 +182,9 @@ GreenSite/
 | `BlockingProxy` 的 `RuleEngine` 不能在构造后固定 | 端点判定引擎若只在构造时创建一次，`ApplyRules` 更新 PAC 规则集后端点仍用旧规则判定，导致 PAC 已分流到拦截端口、端点却按旧白名单放行（日志 `allow`、无拦截气泡）。规则变更时必须以最新规则集同步重建端点 `RuleEngine`。 |
 | 无密码启动快照绝不能写入凭据 | `protection.bin` 不依赖管理密码即可解密，仅用于冷启动重建保护；**绝不能**写入密码哈希 / 恢复码哈希 / 代理备份等敏感字段，否则等于开了无密码读取凭据的口子。凭据只存于 `config.bin`，其安全模型不变。 |
 | 时段切换不能靠服务端定时重建 PAC | 浏览器会缓存 PAC 脚本，服务端定时重建（递增 seq）无法保证时段切换即时生效；PAC 内须用 `gsAllowActive()` + `new Date()` 实时判断当前时间，服务端 `RuleEngine` 用 `TimeOnly` 同步判定，两端共用同一份时段配置。 |
+| 卸载验证必须在单实例 Mutex 之前分流 | `--verify-uninstall` 若走到单实例检查，正在运行的 GreenSite 会让第二实例 Set 事件后直接 `Shutdown()`，卸载器拿不到退出码；`App.OnStartup` 必须最早判断该参数，用 `Dispatcher.BeginInvoke` 弹窗后 `Shutdown(0/1)` 返回退出码。 |
+| 卸载门禁不能只读 `config.bin` 是否存在 | 必须走 `SecureConfigStore.Load` 完整校验（DPAPI + 密码哈希 + HMAC），否则篡改配置或伪造空文件即可绕过；`config.bin` 不存在（从未设密）才放行，避免装了未用却卸不掉。 |
+| 未解锁门禁要留三类豁免 | 首启无配置（否则「设置密码页无法退出」回归）、保护未激活的普通冷启动（退出无拦截可解除）、恢复码解锁未重设态（否则忘记旧密码会形成退出僵局）。判定集中在 `AccessPolicy`，不要在 UI 各处分散写条件。 |
 
 ## 8. 发布流程
 

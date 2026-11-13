@@ -71,12 +71,50 @@ Type: dirifempty; Name: "{app}\logs"
 Type: files; Name: "{app}\data\*.tmp"
 
 [Messages]
-; 卸载确认页给出简短提示：卸载器不会替用户关闭正在运行的保护。
-ConfirmUninstall=卸载不会自动解除保护；若曾开启保护，请先于程序内用管理密码关闭保护或退出程序。%n%n确定要完全移除 %1 及其所有组件吗？
+; 卸载确认页：明确告知需验证管理密码，以及验证失败的后果。
+ConfirmUninstall=卸载需要验证管理密码；验证通过后才继续卸载，验证失败或取消会立即退出卸载程序，不会删除任何文件或更改设置。%n%n若保护正在运行，请先于程序内用管理密码关闭保护或退出程序。%n%n确定要完全移除 %1 及其所有组件吗？
 
 [Code]
 // 程序用命名 Mutex 自行处理单实例与退出，安装器不按进程名结束任何进程，避免误杀宿主进程。
 // 卸载收尾只精确清理本程序留下的 PAC 残留，删除后不弹窗。
+
+// 卸载门禁：InitializeUninstall 在卸载器最早阶段执行，返回 False 立即终止卸载，
+// 不删除任何文件、不写注册表、不进入任何后续卸载步骤。
+// 主程序以 --verify-uninstall 拉起独立验证窗口（不参与单实例 Mutex、不启动防护），
+// 验证走完整链路 header → DPAPI → 密码哈希 → HMAC，退出码 0 = 通过。
+function InitializeUninstall(): Boolean;
+var
+  AppDir, GuardExe: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  AppDir := ExpandConstant('{app}');
+  GuardExe := AddBackslash(AppDir) + 'GreenSite.exe';
+
+  if not FileExists(GuardExe) then
+  begin
+    MsgBox('无法完成管理密码验证：找不到主程序 GreenSite.exe。' + #13#10 +
+           '卸载已取消，未删除任何文件、未更改任何设置。', mbError, MB_OK);
+    exit;
+  end;
+
+  if not Exec(GuardExe, '--verify-uninstall', AppDir,
+              SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+  begin
+    MsgBox('无法启动管理密码验证。' + #13#10 +
+           '卸载已取消，未删除任何文件、未更改任何设置。', mbError, MB_OK);
+    exit;
+  end;
+
+  if ResultCode <> 0 then
+  begin
+    MsgBox('管理密码验证失败或已取消，卸载已取消。' + #13#10 +
+           '未删除任何文件、未更改任何设置。', mbError, MB_OK);
+    exit;
+  end;
+
+  Result := True;
+end;
 
 function IsGreenSitePac(const S: String): Boolean;
 begin

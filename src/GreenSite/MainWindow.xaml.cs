@@ -271,13 +271,18 @@ public partial class MainWindow : Window
 
         _trayMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
 
-        var close = new System.Windows.Forms.ToolStripMenuItem("关闭保护");
+        // 自启未解锁（防护真实在跑）：直接禁用敏感项，避免绕过解锁停止拦截。
+        // 解锁后 RulesChanged → RebuildTrayMenu 会重建菜单并恢复可用。
+        var locked = AppState.Instance.IsUnlockRequired;
+        var close = new System.Windows.Forms.ToolStripMenuItem(
+            locked ? "关闭保护（需先解锁）" : "关闭保护") { Enabled = !locked };
         close.Click += (_, _) => AppState.Instance.RequirePassword(
             "关闭保护", () => AppState.Instance.CloseProtection());
         _trayMenu.Items.Add(close);
 
-        var exit = new System.Windows.Forms.ToolStripMenuItem("退出程序");
-        // 退出决策（是否需要密码 / 恢复码解锁态的僵局豁免 / 未解锁直接退）
+        var exit = new System.Windows.Forms.ToolStripMenuItem(
+            locked ? "退出程序（需先解锁）" : "退出程序") { Enabled = !locked };
+        // 退出决策（是否需密码 / 自启未解锁门禁 / 恢复码解锁态豁免）
         // 全部收敛在 AppState.RequestExit()，此处只调用。
         exit.Click += (_, _) => AppState.Instance.RequestExit();
         _trayMenu.Items.Add(exit);
@@ -337,7 +342,10 @@ public partial class MainWindow : Window
         Hide();
         AppState.Instance.LockEdit(); // 隐藏到托盘后自动锁定编辑
         _tray.ShowBalloonTip(
-            2500, "GreenSite", "已最小化到托盘，规则编辑已锁定。",
+            2500, "GreenSite",
+            AppState.Instance.IsUnlockRequired
+                ? "已最小化到托盘。关闭保护与退出程序需先在主界面解锁。"
+                : "已最小化到托盘，规则编辑已锁定。",
             System.Windows.Forms.ToolTipIcon.Info);
     }
 

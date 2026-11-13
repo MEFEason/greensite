@@ -663,6 +663,86 @@ internal static class Program
             try { System.IO.Directory.Delete(bootDir, recursive: true); } catch { }
         }
 
+        // ── 用例 12：自启未解锁门禁（关闭保护 / 退出 / 关闭窗口仅最小化）──
+        Check("门禁：首启未解锁不要求解锁（设置密码页可退出）",
+            !AccessPolicy.RequiresUnlock(true, false, false));
+        Check("门禁：自启未解锁且防护在跑 → 需解锁",
+            AccessPolicy.RequiresUnlock(false, false, true));
+        Check("门禁：已解锁不需解锁",
+            !AccessPolicy.RequiresUnlock(false, true, true));
+        Check("门禁：普通冷启动未解锁且防护未开 → 不需解锁",
+            !AccessPolicy.RequiresUnlock(false, false, false));
+        Check("门禁：自启未解锁禁止关闭保护",
+            !AccessPolicy.CanStopProtection(false, false, true, false));
+        Check("门禁：自启未解锁禁止退出程序",
+            !AccessPolicy.CanExit(false, false, true, false));
+        Check("门禁：解锁后允许关闭保护",
+            AccessPolicy.CanStopProtection(false, true, true, false));
+        Check("门禁：解锁后允许退出程序",
+            AccessPolicy.CanExit(false, true, true, false));
+        Check("门禁：普通冷启动未解锁且防护未开允许退出",
+            AccessPolicy.CanExit(false, false, false, false));
+        Check("门禁：恢复码解锁未重设仍可退出（僵局豁免）",
+            AccessPolicy.CanExit(false, true, true, true));
+        Check("门禁：自启未解锁关闭窗口只最小化",
+            !AccessPolicy.AllowsExitOnWindowClose(false, false, true, false, "exit"));
+        Check("门禁：自启未解锁且 CloseAction=hide 也只最小化",
+            !AccessPolicy.AllowsExitOnWindowClose(false, false, true, false, "hide"));
+        Check("门禁：首启关闭窗口走确认退出",
+            AccessPolicy.AllowsExitOnWindowClose(true, false, false, false, "hide"));
+        Check("门禁：已解锁 CloseAction=hide 只最小化",
+            !AccessPolicy.AllowsExitOnWindowClose(false, true, true, false, "hide"));
+        Check("门禁：已解锁 CloseAction=exit 允许进入退出流程",
+            AccessPolicy.AllowsExitOnWindowClose(false, true, true, false, "exit"));
+
+        // ── 用例 13：卸载管理密码门禁 ──
+        var guardDir = Path.Combine(Path.GetTempPath(),
+            "greensite-guard-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(guardDir);
+        static System.Security.SecureString Secure(string text)
+        {
+            var s = new System.Security.SecureString();
+            foreach (var c in text) s.AppendChar(c);
+            s.MakeReadOnly();
+            return s;
+        }
+        try
+        {
+            Check("卸载门禁：无配置时无需验证", !UninstallGuard.NeedsVerification(guardDir));
+            using (var none = Secure("anything"))
+                Check("卸载门禁：无配置直接放行",
+                    UninstallGuard.Verify(none, guardDir) == UninstallVerifyResult.NoConfig);
+
+            const string guardPwd = "GuardPwd!2026";
+            var guardStore = new SecureConfigStore(guardDir);
+            var guardCfg = new AppConfig { PacSeq = 1 };
+            guardCfg.Groups.AddRange(groups);
+            guardCfg.Rules.AddRange(rules);
+            guardStore.Save(guardCfg, guardPwd);
+            Check("卸载门禁：存在配置时需要验证", UninstallGuard.NeedsVerification(guardDir));
+
+            using (var good = Secure(guardPwd))
+                Check("卸载门禁：正确管理密码通过",
+                    UninstallGuard.Verify(good, guardDir) == UninstallVerifyResult.Verified);
+            using (var bad = Secure("wrong-password"))
+                Check("卸载门禁：错误管理密码拒绝",
+                    UninstallGuard.Verify(bad, guardDir) == UninstallVerifyResult.Rejected);
+            using (var empty = Secure(""))
+                Check("卸载门禁：空密码拒绝",
+                    UninstallGuard.Verify(empty, guardDir) == UninstallVerifyResult.Rejected);
+
+            var guardRaw = File.ReadAllBytes(guardStore.Path);
+            guardRaw[20] ^= 0xFF;
+            File.WriteAllBytes(guardStore.Path, guardRaw);
+            using (var good2 = Secure(guardPwd))
+                Check("卸载门禁：配置被篡改拒绝",
+                    UninstallGuard.Verify(good2, guardDir) == UninstallVerifyResult.Rejected);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(guardDir, recursive: true); } catch { }
+        }
+
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");
         return _fail == 0 ? 0 : 1;
     }

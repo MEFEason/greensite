@@ -117,6 +117,21 @@ if ($setups.Count -eq 0) {
     Report $false 'dist 安装包 mtime 晚于 GreenSite.exe（±2s）' '主程序缺失，无法比较'
 }
 
+# 10. 卸载门禁静态检查：安装器必须在 InitializeUninstall 里验证管理密码，
+#     失败分支须 MsgBox 提示并终止，防止未来误删导致无密码即可卸载。
+$iss = Join-Path $srcDir 'setup.iss'
+$issOk = $false
+if (Test-Path -LiteralPath $iss -PathType Leaf) {
+    $issText = Get-Content -LiteralPath $iss -Raw -Encoding UTF8
+    $issOk = ($issText -match 'function InitializeUninstall') -and
+             ($issText -match '--verify-uninstall') -and
+             ($issText -match 'ResultCode <> 0') -and
+             ($issText -match 'MsgBox\(') -and
+             ($issText -match 'Result := False')
+}
+Report $issOk 'setup.iss 含卸载管理密码门禁（失败即终止 + MsgBox）' `
+    '缺少 InitializeUninstall / 验证调用 / 失败分支'
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "[verify] 共 $($script:failures) 项未通过" -ForegroundColor Red

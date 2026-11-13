@@ -53,6 +53,12 @@ public sealed class AppState
     public bool IsUnlocked { get; private set; }
     /// <summary>本次会话是否由开机自启快照启动防护，且尚未解锁。</summary>
     public bool IsAutoProtectionActive => _autoProtectionStarted && IsProtectionActive;
+    /// <summary>
+    /// 开机自启已自动开启防护、但尚未解锁：关闭保护 / 退出程序必须先解锁，关闭窗口只最小化。
+    /// 决策下沉到 <see cref="AccessPolicy"/> 纯逻辑，便于自检直接覆盖。
+    /// </summary>
+    public bool IsUnlockRequired =>
+        AccessPolicy.RequiresUnlock(IsFirstRun, IsUnlocked, IsProtectionActive);
     /// <summary>本次会话是否由恢复码解锁、尚未重设管理密码（须强制重设）。</summary>
     public bool NeedPasswordReset { get; private set; }
     /// <summary>规则编辑模式是否解锁（会话内一次解锁，超时或隐藏到托盘自动锁定）。</summary>
@@ -328,6 +334,7 @@ public sealed class AppState
     /// <summary>从托盘重新开启保护（需密码验证后调用）。</summary>
     public void StartProtection()
     {
+        if (IsUnlockRequired) { ShowUnlockRequired(); return; }
         _controller!.Start();
         SaveConfig();
         StateChanged?.Invoke();
@@ -336,10 +343,19 @@ public sealed class AppState
     /// <summary>关闭保护（需密码验证后调用）：解除拦截，进程保留。仅本次会话有效，下次自启会重新自动防护。</summary>
     public void CloseProtection()
     {
+        if (IsUnlockRequired) { ShowUnlockRequired(); return; }
         _controller!.StopProtection();
         SaveConfig();
         StateChanged?.Invoke();
     }
+
+    /// <summary>自启未解锁时统一提示：敏感操作需先在登录页解锁。</summary>
+    private static void ShowUnlockRequired() =>
+        System.Windows.MessageBox.Show(
+            "防护已由开机自启自动开启。关闭保护或退出程序前，请先打开主界面并输入管理密码解锁。",
+            "需要解锁",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
 
     /// <summary>
     /// 退出程序统一入口（所有 UI 出口都调它，决策只此一处）：
@@ -349,6 +365,12 @@ public sealed class AppState
     /// </summary>
     public void RequestExit()
     {
+        // 自启未解锁：防护真实在跑，禁止未经解锁就停止拦截；关闭窗口也只最小化。
+        if (IsUnlockRequired)
+        {
+            ShowUnlockRequired();
+            return;
+        }
         if (NeedPasswordReset)
         {
             var answer = System.Windows.MessageBox.Show(
@@ -397,23 +419,16 @@ public sealed class AppState
     /// </summary>
     public bool OnWindowClose()
     {
-        // 未解锁与恢复码解锁未重设：RequestExit 已覆盖确认与豁免逻辑
-        if (!IsUnlocked || NeedPasswordReset)
-        {
-            var before = IsExiting;
-            RequestExit();
-            return IsExiting && !before;
-        }
+        // 决策统一在 AccessPolicy：自启未解锁 → 只最小化；首启 → 允许确认退出；
+        // 已解锁 → 按 CloseAction；恢复码解锁未重设 → 允许确认退出（僵局豁免）。
+        if (!AccessPolicy.AllowsExitOnWindowClose(
+                IsFirstRun, IsUnlocked, IsProtectionActive, NeedPasswordReset,
+                _config?.CloseAction))
+            return false;
 
-        // 已解锁：按关闭行为设置分流
-        if (string.Equals(Config.CloseAction, "exit", System.StringComparison.OrdinalIgnoreCase))
-        {
-            var before = IsExiting;
-            RequestExit();
-            return IsExiting && !before; // 取消验证则 false，由调用方取消关闭
-        }
-
-        return false; // "hide"：调用方隐藏窗口到托盘
+        var before = IsExiting;
+        RequestExit();
+        return IsExiting && !before;
     }
 
     // ── 修改管理密码 ──────────────────────────────────────────
