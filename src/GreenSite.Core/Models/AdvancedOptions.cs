@@ -20,6 +20,12 @@ public sealed class AdvancedOptions
     /// <summary>守护进程 / 服务：主进程异常退出后自动恢复。</summary>
     public bool WatchdogEnabled { get; set; }
 
+    /// <summary>
+    /// v1.1.1：管理员守护（UAC 提权）。只提权 Guard.exe，主程序仍以普通用户权限运行。
+    /// 只能防止普通用户结束守护进程；已提权管理员仍可强制结束。
+    /// </summary>
+    public bool ElevatedWatchdogEnabled { get; set; }
+
     /// <summary>加密备份（单份、混淆后缀）。</summary>
     public bool BackupEnabled { get; set; } = true;
 
@@ -46,6 +52,7 @@ public sealed class AdvancedOptions
         ShortcutGuardEnabled = ShortcutGuardEnabled,
         ShortcutCheckMinutes = ShortcutCheckMinutes,
         WatchdogEnabled = WatchdogEnabled,
+        ElevatedWatchdogEnabled = ElevatedWatchdogEnabled,
         BackupEnabled = BackupEnabled,
         ShieldSchedule = new ShieldSchedule
         {

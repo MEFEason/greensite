@@ -97,6 +97,18 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 7. **关于页 GitHub 按钮**：关于页新增「打开 GitHub 仓库」按钮，指向 `https://github.com/MEFEason/greensite`；该页仍只显示 `full` 版本串本身，版本号规范不变。
 8. **关闭防护时间段**：新增 `ShieldScheduleEvaluator`，支持多条「周一~周日 + 起止 `HH:mm`」规则（跨午夜），命中时段自动关闭拦截、结束后自动恢复；未启用或规则为空时不生效，与「关闭保护仅本次会话有效」的既有语义并存。规则存于 `AdvancedOptions` / `OptionsStore`。
 
+## 3.6 v1.1.1 行为变更要点（管理员守护开关）
+
+以下为 v1.1.1 相对 v1.1.0 的契约，维护时须保持实现 / 文档 / 自检口径一致。
+
+1. **管理员守护开关（UAC 提权）**：设置页「守护进程」卡片新增「管理员守护（UAC 提权，普通用户无法结束守护进程）」开关，须先勾选「启用守护进程」才可用；勾选时弹 UAC，守护进程 `Guard.exe` 以管理员完整性级别运行。开关状态由 `AdvancedOptions.ElevatedWatchdogEnabled` 承载、`OptionsStore` 持久化到 `options.bin`。边界：能阻止同会话低完整性级别的普通用户在任务管理器结束守护进程，从而主进程被结束后自动恢复；**不能阻止已提权管理员强制结束**。
+2. **降权代启动主程序**：管理员守护拉起主程序时经 `explorer.exe` 降权代启动（`WatchdogService.LaunchMainDeescalated`），主进程仍以普通用户权限运行，不进入「全面管理员模式」。
+3. **关闭后自检退出**：关闭开关后，管理员守护每 10 秒读取 `options.bin`，发现 `AdvancedOptions.ElevatedWatchdogEnabled=false` 即自行退出，无需用户再次提权；`Guard.exe` 须按该周期主动做自检退出，不可常驻。
+4. **双心跳文件**：`WatchdogService.ElevatedHeartbeatPath` 指向 `%LOCALAPPDATA%\GreenSite\watchdog-elevated.bin`，仅管理员守护写入；普通心跳 `watchdog.bin` 由普通 / 管理员守护均写。`WatchdogService.IsElevatedWatchdogRunning` 以 `watchdog-elevated.bin` 心跳判定管理员守护是否存活。
+5. **登录后重新授权**：UAC 提权无法静默完成；每次 Windows 登录后若管理员守护心跳消失，程序自动降级为普通守护并在设置页提示，用户需重新进入设置页勾选开关以恢复。`WatchdogService.StartElevatedWatchdog` 负责提权拉起，命令行开关 `WatchdogService.ElevatedWatchdogArgument` 标识以管理员守护模式启动。
+6. **不影响安装器可选服务**：v1.1.0 安装器可选 Windows 服务仍是安装时选项，本次未改；管理员守护是独立于该服务的用户会话侧机制。
+7. **自检项（与只读门禁同步）**：`src/GreenSite.SelfTest` 以纯逻辑 / 文件心跳方式覆盖 `AdvancedOptions.ElevatedWatchdogEnabled` 契约，以及 `WatchdogService.ElevatedWatchdogArgument` / `ElevatedHeartbeatPath` / `WriteElevatedWatchdogHeartbeat` / `IsElevatedWatchdogRunning` / `ShouldElevatedWatchdogExit` 的语义（含 `Guard.exe` 读取 `options.bin` 发现配置为 false 时自检退出）。按契约**不真实触发 UAC / 启动进程 / 弹窗**，`StartElevatedWatchdog` / `LaunchMainDeescalated` 这类进程触发 API 不由自检调用，仅靠实现本身与产物字符串静态门禁覆盖。`scripts/verify_product.ps1` 只读静态门禁检查：`Core.dll` 的 `ElevatedWatchdogEnabled` / `--elevated-watchdog`、`GreenSite.dll` 的 `ElevatedWatchdogCheck`、`Guard.exe` 的提权参数 / 选项，以及 `SettingsPage.xaml` 的 `x:Name="ElevatedWatchdogCheck"` 与 `ElevatedWatchdog_Changed`，防止回归。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
@@ -117,6 +129,8 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 12. 自启未解锁门禁（关闭保护 / 退出 / 关闭窗口仅最小化的状态矩阵）
 13. 卸载管理密码门禁（正确 / 错误 / 空密码 / 篡改配置 / 无配置）
 14. 状态栏快捷开关状态矩阵（16 种门禁组合、文案与可用状态一致性）
+
+> v1.1.1 起追加管理员守护开关契约自检与 `verify_product.ps1` 静态门禁，符号清单见「3.6 v1.1.1 行为变更要点」。上面 15 组 / 204 条为 v1.1.0 基线；v1.1.1 自检已扩至 16 组 218 条，以 `src/GreenSite.SelfTest/Program.cs` 的实际输出为准。
 
 失败即退出码 1，`build.ps1` 中止。可单独运行：
 

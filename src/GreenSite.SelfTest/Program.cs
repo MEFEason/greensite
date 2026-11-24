@@ -863,6 +863,57 @@ internal static class Program
             try { Directory.Delete(v11Dir, recursive: true); } catch { }
         }
 
+        // ── 用例 16：v1.1.1 管理员守护开关（选项往返 / 提权心跳 / 关闭语义）──
+        var elevatedDir = Path.Combine(Path.GetTempPath(),
+            "greensite-v111-elevated-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(elevatedDir);
+        try
+        {
+            var elevatedOpts = new AdvancedOptions();
+            Check("v1.1.1 管理员守护默认关闭", !elevatedOpts.ElevatedWatchdogEnabled);
+
+            elevatedOpts.ElevatedWatchdogEnabled = true;
+            var elevatedStore = new OptionsStore(elevatedDir);
+            elevatedStore.Save(elevatedOpts);
+            Check("v1.1.1 options.bin 往返保留管理员守护开关",
+                elevatedStore.Load().ElevatedWatchdogEnabled);
+            Check("v1.1.1 Copy() 保留管理员守护开关", elevatedOpts.Copy().ElevatedWatchdogEnabled);
+            elevatedOpts.Normalize();
+            Check("v1.1.1 Normalize() 不重置管理员守护开关", elevatedOpts.ElevatedWatchdogEnabled);
+
+            // 配置关闭语义：将 options.bin 写回 false，无密码读回即为「守护应退出」依据
+            elevatedOpts.ElevatedWatchdogEnabled = false;
+            elevatedStore.Save(elevatedOpts);
+            var closedOpts = elevatedStore.Load();
+            Check("v1.1.1 配置关闭后读回为 false", !closedOpts.ElevatedWatchdogEnabled);
+            Check("v1.1.1 配置关闭 → 管理员守护判定退出",
+                WatchdogService.ShouldElevatedWatchdogExit(closedOpts));
+            Check("v1.1.1 默认配置 → 管理员守护判定退出",
+                WatchdogService.ShouldElevatedWatchdogExit(new AdvancedOptions()));
+            Check("v1.1.1 空配置 → 管理员守护判定退出",
+                WatchdogService.ShouldElevatedWatchdogExit(null));
+            Check("v1.1.1 配置开启 → 管理员守护判定继续运行",
+                !WatchdogService.ShouldElevatedWatchdogExit(
+                    new AdvancedOptions { ElevatedWatchdogEnabled = true }));
+
+            Equal("v1.1.1 提权守护参数常量", "--elevated-watchdog",
+                WatchdogService.ElevatedWatchdogArgument);
+            Equal("v1.1.1 提权心跳文件名", "watchdog-elevated.bin",
+                Path.GetFileName(WatchdogService.ElevatedHeartbeatPath(elevatedDir)));
+            WatchdogService.WriteElevatedWatchdogHeartbeat(elevatedDir);
+            Check("v1.1.1 提权心跳新鲜判定",
+                WatchdogService.IsElevatedWatchdogRunning(elevatedDir, TimeSpan.FromSeconds(5)));
+            Check("v1.1.1 提权心跳超时判定",
+                !WatchdogService.IsElevatedWatchdogRunning(elevatedDir, TimeSpan.Zero));
+            Check("v1.1.1 提权心跳与普通心跳文件互不干扰",
+                Path.GetFileName(WatchdogService.HeartbeatPath(elevatedDir)) !=
+                Path.GetFileName(WatchdogService.ElevatedHeartbeatPath(elevatedDir)));
+        }
+        finally
+        {
+            try { Directory.Delete(elevatedDir, recursive: true); } catch { }
+        }
+
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");
         return _fail == 0 ? 0 : 1;
     }

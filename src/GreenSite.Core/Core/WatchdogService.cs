@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using GreenSite.Core.Models;
 
 namespace GreenSite.Core.Core;
 
@@ -10,6 +11,9 @@ namespace GreenSite.Core.Core;
 public static class WatchdogService
 {
     public const string WatchdogArgument = "--watchdog";
+
+    /// <summary>v1.1.1：管理员守护参数（配合 --watchdog 使用）。</summary>
+    public const string ElevatedWatchdogArgument = "--elevated-watchdog";
     public static TimeSpan DefaultMainTimeout { get; } = TimeSpan.FromSeconds(45);
     public static TimeSpan DefaultWatchdogTimeout { get; } = TimeSpan.FromSeconds(40);
 
@@ -18,6 +22,9 @@ public static class WatchdogService
 
     public static string HeartbeatPath(string directory) => Path.Combine(directory, "heartbeat.bin");
     public static string WatchdogHeartbeatPath(string directory) => Path.Combine(directory, "watchdog.bin");
+
+    /// <summary>v1.1.1：仅管理员守护写的心跳，用于区分管理员 / 普通守护。</summary>
+    public static string ElevatedHeartbeatPath(string directory) => Path.Combine(directory, "watchdog-elevated.bin");
 
     public static void WriteHeartbeat(string directory)
     {
@@ -39,6 +46,18 @@ public static class WatchdogService
         catch { /* 同上 */ }
     }
 
+    /// <summary>管理员守护写两份心跳：兼容普通守护状态，同时提供独立的提权状态来源。</summary>
+    public static void WriteElevatedWatchdogHeartbeat(string directory)
+    {
+        WriteWatchdogHeartbeat(directory);
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(ElevatedHeartbeatPath(directory), DateTime.UtcNow.Ticks.ToString());
+        }
+        catch { /* 同上 */ }
+    }
+
     public static bool IsMainAlive(string directory, TimeSpan maxAge) =>
         IsFresh(HeartbeatPath(directory), maxAge);
 
@@ -46,6 +65,14 @@ public static class WatchdogService
 
     public static bool IsWatchdogRunning(string directory, TimeSpan maxAge) =>
         IsFresh(WatchdogHeartbeatPath(directory), maxAge);
+
+    /// <summary>v1.1.1：管理员守护心跳（普通守护写 watchdog.bin，不写这个文件）。</summary>
+    public static bool IsElevatedWatchdogRunning(string directory, TimeSpan maxAge) =>
+        IsFresh(ElevatedHeartbeatPath(directory), maxAge);
+
+    /// <summary>管理员守护每 10 秒调用：用户关闭开关后自行退出，无需再次提权。</summary>
+    public static bool ShouldElevatedWatchdogExit(AdvancedOptions? options) =>
+        options is null || !options.ElevatedWatchdogEnabled;
 
     private static bool IsFresh(string path, TimeSpan maxAge)
     {
@@ -72,6 +99,53 @@ public static class WatchdogService
             Process.Start(new ProcessStartInfo(exePath)
             {
                 Arguments = WatchdogArgument,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exePath) ?? "",
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// v1.1.1：经用户确认 UAC 后启动管理员守护。取消授权时抛异常并返回 false，由设置页回滚开关。
+    /// 只提权 Guard.exe；主程序权限不变。
+    /// </summary>
+    public static bool StartElevatedWatchdog(string exePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return false;
+            Process.Start(new ProcessStartInfo(exePath)
+            {
+                Arguments = $"{WatchdogArgument} {ElevatedWatchdogArgument}",
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = Path.GetDirectoryName(exePath) ?? "",
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// v1.1.1：从已提权的守护进程拉起主程序时，借 explorer.exe（普通用户完整性级别）代启动，
+    /// 避免管理权限被继承给主程序。仍是可见的正常启动，无隐藏、无注入。
+    /// </summary>
+    public static bool LaunchMainDeescalated(string exePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return false;
+            Process.Start(new ProcessStartInfo("explorer.exe")
+            {
+                Arguments = $"\"{exePath}\" --minimized",
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(exePath) ?? "",
             });

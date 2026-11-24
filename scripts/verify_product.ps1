@@ -193,6 +193,74 @@ if ((Test-Path -LiteralPath $coreDllV11 -PathType Leaf) -and
     Report $false 'v1.1.0 产物 DLL 存在' '无法检查产物 DLL'
 }
 
+# 14. v1.1.1：管理员守护开关（选项/参数字符串、设置页接线）。
+#     .NET 元数据名（属性/类型）走 #Strings 堆可用 ASCII 解码；
+#     字符串常量走 #US 堆为 UTF-16LE，必须用 Encoding.Unicode 才能命中。
+function Test-BinaryHasText([byte[]]$Bytes, [string]$Needle) {
+    if ($null -eq $Bytes) { return $false }
+    $asciiText = [System.Text.Encoding]::ASCII.GetString($Bytes)
+    $unicodeText = [System.Text.Encoding]::Unicode.GetString($Bytes)
+    return ($asciiText.IndexOf($Needle, [System.StringComparison]::Ordinal) -ge 0) -or
+           ($unicodeText.IndexOf($Needle, [System.StringComparison]::Ordinal) -ge 0)
+}
+
+$coreDllV111 = Join-Path $root 'outputs\GreenSite\GreenSite.Core.dll'
+$appDllV111 = Join-Path $root 'outputs\GreenSite\GreenSite.dll'
+$guardExeV111 = Join-Path $root 'outputs\GreenSite\Guard.exe'
+$settingsXamlV111 = Join-Path $srcDir 'GreenSite\Views\SettingsPage.xaml'
+
+$coreBytesV111 = if (Test-Path -LiteralPath $coreDllV111 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($coreDllV111)
+} else { $null }
+$coreV111Ok = (Test-BinaryHasText $coreBytesV111 'ElevatedWatchdogEnabled') -and
+              (Test-BinaryHasText $coreBytesV111 '--elevated-watchdog')
+Report $coreV111Ok 'v1.1.1 Core.dll 含管理员守护选项与提权参数' `
+    'ASCII/Unicode 解码均缺少 ElevatedWatchdogEnabled 或 --elevated-watchdog'
+
+$appBytesV111 = if (Test-Path -LiteralPath $appDllV111 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($appDllV111)
+} else { $null }
+Report (Test-BinaryHasText $appBytesV111 'ElevatedWatchdogCheck') `
+    'v1.1.1 GreenSite.dll 含设置页管理员守护开关' `
+    'ASCII/Unicode 解码均缺少 ElevatedWatchdogCheck'
+
+# 注意：Guard.exe 只是 apphost，IL 与字符串常量在 Guard.dll；优先检查 DLL，缺失时回退 exe。
+$guardDllV111 = Join-Path $root 'outputs\GreenSite\Guard.dll'
+$guardBytesV111 = if (Test-Path -LiteralPath $guardDllV111 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($guardDllV111)
+} elseif (Test-Path -LiteralPath $guardExeV111 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($guardExeV111)
+} else { $null }
+$guardV111Ok = (Test-BinaryHasText $guardBytesV111 '--elevated-watchdog') -or
+               (Test-BinaryHasText $guardBytesV111 'ElevatedWatchdogEnabled')
+Report $guardV111Ok 'v1.1.1 Guard.exe 含提权守护参数/选项' `
+    'ASCII/Unicode 解码均缺少 --elevated-watchdog 或 ElevatedWatchdogEnabled'
+
+$settingsOkV111 = $false
+if (Test-Path -LiteralPath $settingsXamlV111 -PathType Leaf) {
+    $settingsTextV111 = Get-Content -LiteralPath $settingsXamlV111 -Raw -Encoding UTF8
+    $settingsOkV111 = ($settingsTextV111 -match 'x:Name="ElevatedWatchdogCheck"') -and
+                      ($settingsTextV111 -match 'ElevatedWatchdog_Changed')
+}
+Report $settingsOkV111 'v1.1.1 设置页含管理员守护 CheckBox 与事件接线' `
+    '缺少 x:Name="ElevatedWatchdogCheck" 或 ElevatedWatchdog_Changed'
+
+# 15. Guard.exe 必须是 GUI 子系统：OutputType=Exe 会生成 Console 子系统，
+#     启动守护时伴随一个 cmd 窗口（v1.1.1 beta 实测问题），改为 WinExe 后 PE Subsystem=2。
+$guardPe = Join-Path $appDir 'Guard.exe'
+$guardSubsystem = $null
+if (Test-Path -LiteralPath $guardPe -PathType Leaf) {
+    $peBytes = [System.IO.File]::ReadAllBytes($guardPe)
+    if ($peBytes.Length -gt 0x40) {
+        $peOffset = [System.BitConverter]::ToInt32($peBytes, 0x3C)
+        if ($peOffset -gt 0 -and ($peOffset + 0x50) -lt $peBytes.Length) {
+            $guardSubsystem = [System.BitConverter]::ToUInt16($peBytes, $peOffset + 24 + 68)
+        }
+    }
+}
+Report ($guardSubsystem -eq 2) 'Guard.exe 为 GUI 子系统（启动不弹控制台窗口）' `
+    "PE Subsystem=$guardSubsystem（2=GUI；3=Console 会弹 cmd 窗口）"
+
 Write-Host ''
 if ($script:failures -gt 0) {
     Write-Host "[verify] 共 $($script:failures) 项未通过" -ForegroundColor Red

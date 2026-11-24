@@ -156,8 +156,13 @@
                     <CheckBox x:Name="WatchdogCheck" Content="启用守护进程（主进程异常退出后自动恢复）"
                               Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
                               Checked="Watchdog_Changed" Unchecked="Watchdog_Changed" />
-                    <TextBlock Text="独立守护进程定时检测主进程心跳，发现异常退出后自动拉起；需管理员安装的服务为可选项，未安装时自动使用当前用户自启方式。被管理员强制结束的进程无法绝对阻止，只能自动恢复。"
+                    <TextBlock Text="独立守护进程定时检测主进程心跳，发现异常退出后自动拉起；未安装服务时自动使用当前用户方式。被管理员强制结束的进程无法绝对阻止，只能自动恢复。"
                                Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+                    <CheckBox x:Name="ElevatedWatchdogCheck" Content="管理员守护（UAC 提权，普通用户无法结束守护进程）"
+                              Margin="22,10,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="ElevatedWatchdog_Changed" Unchecked="ElevatedWatchdog_Changed" />
+                    <TextBlock Text="开启时弹出 UAC 授权，仅提权 Guard.exe；主程序仍以普通用户权限运行。可阻止普通用户在任务管理器中结束守护，从而自动恢复主进程；已提权管理员仍可强制结束。每次重新登录后需在本页重新授权，未授权时自动降级为普通守护。关闭开关后守护进程会在约 10 秒内自行退出。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="44,4,0,0" />
                     <TextBlock x:Name="WatchdogStatusText" Style="{StaticResource MutedTextStyle}"
                                Margin="22,6,0,0" />
                 </StackPanel>

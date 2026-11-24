@@ -391,11 +391,20 @@ public sealed class AppState
     {
         WatchdogService.WriteHeartbeat(_configDirectory);
 
-        if (AdvancedOptions.WatchdogEnabled && !WatchdogService.IsWatchdogRunning(
-                _configDirectory, WatchdogService.DefaultWatchdogTimeout))
+        if (AdvancedOptions.WatchdogEnabled)
         {
             var guard = Path.Combine(AppContext.BaseDirectory, "Guard.exe");
-            if (File.Exists(guard)) WatchdogService.StartWatchdog(guard);
+            if (File.Exists(guard))
+            {
+                // v1.1.1：UAC 提权无法在无人值守的自启路径静默完成。
+                // 管理员守护心跳消失后自动降级为普通守护；用户可在设置页再次授权恢复。
+                var elevatedAlive = AdvancedOptions.ElevatedWatchdogEnabled &&
+                    WatchdogService.IsElevatedWatchdogRunning(
+                        _configDirectory, WatchdogService.DefaultWatchdogTimeout);
+                var anyAlive = WatchdogService.IsWatchdogRunning(
+                    _configDirectory, WatchdogService.DefaultWatchdogTimeout);
+                if (!elevatedAlive && !anyAlive) WatchdogService.StartWatchdog(guard);
+            }
         }
 
         if (AdvancedOptions.ShortcutGuardEnabled)
