@@ -775,6 +775,94 @@ internal static class Program
         Check("状态栏按钮：禁用态不可绕过停止拦截",
             !tbLocked.Enabled && !AccessPolicy.CanStopProtection(false, false, true, false));
 
+        // ── 用例 15：v1.1.0 高级配置 / 备份 / ACL / 守护心跳 / 关闭时段 ──
+        var v11Dir = Path.Combine(Path.GetTempPath(),
+            "greensite-v110-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(v11Dir);
+        try
+        {
+            var opts = new AdvancedOptions();
+            Check("v1.1.0 备份默认开启", opts.BackupEnabled);
+            opts.ShortcutCheckMinutes = 99999;
+            opts.Normalize();
+            Equal("v1.1.0 间隔越界回落 30", 30, opts.ShortcutCheckMinutes);
+
+            var optStore = new OptionsStore(v11Dir);
+            opts.ShortcutGuardEnabled = true;
+            opts.ShortcutCheckMinutes = 45;
+            opts.ShieldSchedule.Rules.Add(new ShieldRule
+            {
+                Day = DayOfWeek.Saturday, Start = "22:00", End = "06:00",
+            });
+            optStore.Save(opts);
+            var loadedOpts = optStore.Load();
+            Check("v1.1.0 options.bin 往返",
+                loadedOpts.ShortcutGuardEnabled && loadedOpts.ShortcutCheckMinutes == 45
+                && loadedOpts.ShieldSchedule.Rules.Count == 1);
+            File.WriteAllText(optStore.Path, "broken");
+            Check("v1.1.0 配置损坏回落默认", !optStore.Load().ShortcutGuardEnabled);
+
+            Check("v1.1.0 时段格式校验",
+                ShieldSchedule.IsValidTime("09:05")
+                && !ShieldSchedule.IsValidTime("25:00")
+                && !ShieldSchedule.IsValidTime("9:5"));
+            var satRule = new ShieldRule
+            {
+                Day = DayOfWeek.Saturday, Start = "22:00", End = "06:00",
+            };
+            Check("v1.1.0 时段同日命中", satRule.Contains(new DateTime(2026, 11, 14, 23, 0, 0)));
+            Check("v1.1.0 时段跨午夜命中", satRule.Contains(new DateTime(2026, 11, 15, 1, 0, 0)));
+            Check("v1.1.0 时段外不命中", !satRule.Contains(new DateTime(2026, 11, 14, 12, 0, 0)));
+            Check("v1.1.0 星期不匹配（周五不命中周六规则）",
+                !satRule.Contains(new DateTime(2026, 11, 20, 23, 0, 0)));
+            var shield = new ShieldSchedule { Enabled = true, Rules = [satRule] };
+            Check("v1.1.0 时段命中触发抑制",
+                ShieldScheduleEvaluator.IsSuppressed(shield, new DateTime(2026, 11, 14, 23, 0, 0)));
+            Check("v1.1.0 时段结束自动恢复",
+                ShieldScheduleEvaluator.ShouldRestore(shield, new DateTime(2026, 11, 14, 12, 0, 0), true));
+            Check("v1.1.0 未启用不抑制",
+                !ShieldScheduleEvaluator.IsSuppressed(
+                    new ShieldSchedule { Rules = [satRule] }, new DateTime(2026, 11, 14, 23, 0, 0)));
+
+            const string sample = "{\"secret\":\"test\"}";
+            var backup = new EncryptedBackupStore(v11Dir);
+            var srcFile = Path.Combine(v11Dir, "config.bin");
+            File.WriteAllText(srcFile, sample);
+            Equal("v1.1.0 单份加密备份创建", BackupResult.Success, backup.CreateBackup([srcFile]));
+            Check("v1.1.0 备份混淆后缀（非 zip/bak）",
+                backup.Exists && backup.ObfuscatedFileName == "cache.idx"
+                && !File.Exists(Path.Combine(backup.DirectoryPath, "config.zip")));
+            File.Delete(srcFile);
+            var restoreDir = Path.Combine(v11Dir, "restore");
+            Equal("v1.1.0 备份恢复", BackupResult.Success, backup.RestoreBackup(restoreDir));
+            Check("v1.1.0 恢复内容一致",
+                File.ReadAllText(Path.Combine(restoreDir, "config.bin")) == sample);
+            Check("v1.1.0 解包兜底可用",
+                backup.TryOpenFallback(out var fallbackDir, out _)
+                && File.Exists(Path.Combine(fallbackDir, "config.bin")));
+            File.WriteAllText(backup.BackupPath, "garbage");
+            Equal("v1.1.0 损坏备份被拒绝", BackupResult.Corrupted, backup.RestoreBackup(restoreDir));
+
+            Check("v1.1.0 受保护文件名清单",
+                FileProtectionService.IsProtectedName("config.bin")
+                && FileProtectionService.IsProtectedName("cache.idx")
+                && !FileProtectionService.IsProtectedName("logo.png"));
+            Equal("v1.1.0 文件缺失检测", 2,
+                FileProtectionService.MissingFiles(
+                    [Path.Combine(v11Dir, "none.bin"), srcFile]).Length);
+
+            WatchdogService.WriteHeartbeat(v11Dir);
+            Check("v1.1.0 心跳新鲜判定", WatchdogService.IsMainAlive(v11Dir, TimeSpan.FromSeconds(5)));
+            Check("v1.1.0 心跳超时判定", !WatchdogService.IsMainAlive(v11Dir, TimeSpan.Zero));
+            Check("v1.1.0 快捷方式路径契约",
+                Path.GetFileName(ShortcutGuardService.ShortcutPath) == "GreenSite.lnk"
+                && Path.IsPathRooted(ShortcutGuardService.PublicDesktop));
+        }
+        finally
+        {
+            try { Directory.Delete(v11Dir, recursive: true); } catch { }
+        }
+
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");
         return _fail == 0 ? 0 : 1;
     }

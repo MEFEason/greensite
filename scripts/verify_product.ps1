@@ -91,7 +91,7 @@ Report ($forbidden.Count -eq 0) 'outputs/GreenSite 内无 *.pfx / *.key / config
 
 # 8. 产物 mtime 不早于 src/**/*.{cs,xaml} 的最大 mtime（允许 2 秒误差）
 $srcFiles = @(Get-ChildItem -LiteralPath $srcDir -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in @('.cs', '.xaml') })
+    Where-Object { $_.Extension -in @('.cs', '.xaml') -and $_.FullName -notmatch '\\(obj|bin)\\' })
 if ($null -ne $exeItem -and $srcFiles.Count -gt 0) {
     $maxSrc = $srcFiles | ForEach-Object { $_.LastWriteTime } | Sort-Object | Select-Object -Last 1
     $mOk = $exeItem.LastWriteTime -ge $maxSrc.AddSeconds(-2)
@@ -161,6 +161,37 @@ if ((Test-Path -LiteralPath $mainXaml -PathType Leaf) -and
 }
 Report $toggleOk '主界面状态栏含防护快捷开关（状态栏 + 状态总览卡片）' `
     '缺少 ProtectionToggleButton 或其事件接线'
+
+# 13. v1.1.0：守护程序产物与安装器配置选项静态检查。
+$guardExe = Join-Path $root 'outputs\GreenSite\Guard.exe'
+Report (Test-Path -LiteralPath $guardExe -PathType Leaf) `
+    'Guard.exe 守护进程/服务已随产物交付' 'outputs/GreenSite/Guard.exe 缺失'
+$issTextV11 = if (Test-Path -LiteralPath $iss -PathType Leaf) {
+    Get-Content -LiteralPath $iss -Raw -Encoding UTF8
+} else { '' }
+$issV11Ok = ($issTextV11 -match '覆盖已有用户配置') -and
+            ($issTextV11 -match '是否同时删除本机用户配置') -and
+            ($issTextV11 -match 'GreenSiteGuard')
+Report $issV11Ok 'setup.iss 含安装覆盖/卸载删除配置选项与守护服务' `
+    '缺少配置选项或守护服务安装逻辑'
+$coreDllV11 = Join-Path $root 'outputs\GreenSite\GreenSite.Core.dll'
+$appDllV11 = Join-Path $root 'outputs\GreenSite\GreenSite.dll'
+if ((Test-Path -LiteralPath $coreDllV11 -PathType Leaf) -and
+    (Test-Path -LiteralPath $appDllV11 -PathType Leaf)) {
+    $coreBytes = [System.IO.File]::ReadAllBytes($coreDllV11)
+    $appBytes = [System.IO.File]::ReadAllBytes($appDllV11)
+    $coreText = [System.Text.Encoding]::ASCII.GetString($coreBytes)
+    $appText = [System.Text.Encoding]::ASCII.GetString($appBytes)
+    $typesOk = ($coreText -match 'AdvancedOptions') -and
+               ($coreText -match 'EncryptedBackupStore') -and
+               ($coreText -match 'ShieldScheduleEvaluator') -and
+               ($coreText -match 'WatchdogService') -and
+               ($appText -match 'OpenGitHub_Click')
+    Report $typesOk 'v1.1.0 新类型与 GitHub 入口已编入产物' `
+        '产物 DLL 缺少 v1.1.0 新类型/事件'
+} else {
+    Report $false 'v1.1.0 产物 DLL 存在' '无法检查产物 DLL'
+}
 
 Write-Host ''
 if ($script:failures -gt 0) {

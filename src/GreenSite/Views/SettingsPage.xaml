@@ -102,6 +102,94 @@
                 </StackPanel>
             </Border>
 
+            <!-- 文件与快捷方式保护 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="文件与快捷方式保护" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="FileProtectionCheck" Content="保护程序文件与配置（阻止直接删除）"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="FileProtection_Changed" Unchecked="FileProtection_Changed" />
+                    <TextBlock Text="开启后对 config.bin / protection.bin / options.bin 与备份文件设置拒绝删除的 ACL，并定时校验完整性；文件被删时自动从备份恢复。这是用户级自保护，管理员仍可强制删除；不安装驱动、不注入进程。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+
+                    <CheckBox x:Name="ShortcutGuardCheck" Content="快捷方式守护（公共桌面）"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="ShortcutGuard_Changed" Unchecked="ShortcutGuard_Changed" />
+                    <StackPanel Orientation="Horizontal" Margin="22,8,0,0">
+                        <TextBlock Text="检查间隔（分钟）" Style="{StaticResource BodyTextStyle}"
+                                   VerticalAlignment="Center" />
+                        <TextBox x:Name="ShortcutIntervalBox" Width="70" Margin="10,0,0,0"
+                                 Style="{StaticResource InputTextBoxStyle}"
+                                 LostFocus="ShortcutInterval_LostFocus" />
+                    </StackPanel>
+                    <TextBlock Text="每 n 分钟检查一次公共桌面 GreenSite.lnk，缺失时自动重建；范围 1–1440，默认 30。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+                    <TextBlock x:Name="ProtectionFilesStatusText" Style="{StaticResource MutedTextStyle}"
+                               Margin="22,6,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- 加密备份 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="加密备份" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="BackupEnabledCheck" Content="启用加密备份（仅保留一份）"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="BackupEnabled_Changed" Unchecked="BackupEnabled_Changed" />
+                    <TextBlock Text="备份存放于 %LOCALAPPDATA%\stgren\bkp，使用混淆后缀；流程为先打包 zip 再 DPAPI 加密。配置读取失败时可用『解包兜底』从备份恢复。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="BackupNowButton" Content="立即备份" Click="BackupNow_Click"
+                                Style="{StaticResource PrimaryButtonStyle}" />
+                        <Button x:Name="RestoreBackupButton" Content="从备份恢复" Click="RestoreBackup_Click"
+                                Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="BackupStatusText" Style="{StaticResource MutedTextStyle}"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- 守护进程 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="守护进程" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="WatchdogCheck" Content="启用守护进程（主进程异常退出后自动恢复）"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="Watchdog_Changed" Unchecked="Watchdog_Changed" />
+                    <TextBlock Text="独立守护进程定时检测主进程心跳，发现异常退出后自动拉起；需管理员安装的服务为可选项，未安装时自动使用当前用户自启方式。被管理员强制结束的进程无法绝对阻止，只能自动恢复。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+                    <TextBlock x:Name="WatchdogStatusText" Style="{StaticResource MutedTextStyle}"
+                               Margin="22,6,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- 关闭防护时段 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="关闭防护时段" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox x:Name="ShieldEnabledCheck" Content="按时段自动关闭防护"
+                              Margin="0,12,0,0" Style="{StaticResource SwitchCheckBoxStyle}"
+                              Checked="ShieldEnabled_Changed" Unchecked="ShieldEnabled_Changed" />
+                    <TextBlock Text="可添加多个『星期 + 起止时间』规则；命中时段时自动关闭拦截，时段结束后自动恢复。支持跨午夜（如 22:00–06:00）。未启用或规则为空时不生效；手动关闭保护仅本次会话有效。"
+                               Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="22,4,0,0" />
+
+                    <StackPanel x:Name="ShieldRows" Margin="0,12,0,0" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="AddShieldRuleButton" Content="添加规则" Click="AddShieldRule_Click"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button x:Name="ApplyShieldButton" Content="保存时段规则" Click="ApplyShield_Click"
+                                Style="{StaticResource PrimaryButtonStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="ShieldError" Style="{StaticResource BodyTextStyle}"
+                               Margin="0,8,0,0" Visibility="Collapsed"
+                               Foreground="{DynamicResource WarnForeground}" />
+                    <TextBlock x:Name="ShieldSummary" Style="{StaticResource MutedTextStyle}"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- 安全 -->
             <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
                 <StackPanel>

@@ -3,12 +3,15 @@
 ## 提交前检查
 
 - `dotnet build -c Release` **0 error**；或跑完整流水线 `scripts/build.ps1`
-- `scripts/selftest.ps1` **14 组用例 181 条全绿**
+- `scripts/selftest.ps1` **15 组用例 204 条全绿**
 - `scripts/verify_product.ps1`（只读体检）通过
 - 未提交任何凭据：`*.pfx`、`*.key`、`*.p12`、`*.pem`、`*.snk`、`config.bin`、`config.bak`、token、密码
 - 未提交构建产物与运行期数据：`bin/`、`obj/`、`outputs/`、`dist/`、`.version.ini`、`*.log`
 - 新增 `.ps1` 为 UTF-8 BOM；脚本写文件用 `UTF8Encoding($false)` 显式指定编码
 - 不修改用户 PATH、不在安装尾声手工写注册表键
+- 新增文件自保护 / 守护进程 / 加密备份逻辑时，必须同步补充自检断言（覆盖正常路径、边界与失败路径），并更新对应文档与手动验证清单
+- 不得引入内核驱动、进程注入或隐藏启动等对抗性手段；自保护是用户级 ACL + 完整性校验，须如实标注管理员可绕过的边界，避免杀软误报
+- 安装器涉及删除用户配置的选项必须先做路径安全校验（确认位于用户数据目录内、防路径穿越 / 符号链接误删），且默认保留用户配置与日志目录，不得静默删除
 
 ## 代码约定
 

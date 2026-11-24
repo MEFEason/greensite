@@ -109,6 +109,17 @@ try {
     & dotnet @publishArgs
     Assert-Native 'dotnet publish'
 
+    # 5.1 v1.1.0：独立守护程序 Guard.exe（守护进程 + 可选 Windows 服务），与主程序同版本
+    Step 'dotnet publish Guard.exe (守护进程/服务)'
+    $guardProj = Join-Path $root 'src\GreenSite.Guard\GreenSite.Guard.csproj'
+    & dotnet publish $guardProj -c Release -r win-x64 --self-contained false -o $publishDir `
+        "-p:Version=$num" "-p:FileVersion=$num" "-p:AssemblyVersion=$num" `
+        "-p:InformationalVersion=$full"
+    Assert-Native 'dotnet publish Guard'
+    if (-not (Test-Path -LiteralPath (Join-Path $publishDir 'Guard.exe') -PathType Leaf)) {
+        throw 'Guard.exe 未生成，守护进程/服务无法工作'
+    }
+
     # 6. 组装 outputs/GreenSite/
     Step '组装 outputs/GreenSite'
     if (-not (Test-Path -LiteralPath $publishDir -PathType Container)) {

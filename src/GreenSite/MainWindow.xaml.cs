@@ -80,8 +80,8 @@ public partial class MainWindow : Window
             3000,
             "GreenSite 已启动",
             active
-                ? "开机自启完成，防护已自动开启。点击托盘图标打开主界面（修改设置需解锁）。"
-                : "已启动到托盘。点击托盘图标打开主界面，解锁后保护自动开启。",
+                ? "开机自启完成，防护已自动开启。点击托盘图标打开主界面（修改设置需先解锁）。"
+                : "已启动到托盘。点击托盘图标打开主界面；解锁后可开启防护或修改设置。",
             System.Windows.Forms.ToolTipIcon.Info);
     }
 

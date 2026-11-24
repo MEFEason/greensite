@@ -9,6 +9,9 @@ namespace GreenSite.Views;
 /// <summary>关于页：完整版本串、许可说明、NOTICE/THIRD_PARTY_LICENSES 入口、设计致谢、logo。</summary>
 public partial class AboutPage : System.Windows.Controls.UserControl
 {
+    // 项目仓库地址：关于页跳转与失败提示共用
+    private const string RepoUrl = "https://github.com/MEFEason/greensite";
+
     public AboutPage()
     {
         InitializeComponent();
@@ -31,6 +34,20 @@ public partial class AboutPage : System.Windows.Controls.UserControl
         OpenFile("THIRD_PARTY_LICENSES/README.md");
 
     private void OpenLicense_Click(object sender, RoutedEventArgs e) => OpenFile("LICENSE");
+
+    // 打开项目仓库：失败时提示用户手动访问
+    private void OpenGitHub_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(RepoUrl) { UseShellExecute = true });
+        }
+        catch
+        {
+            System.Windows.MessageBox.Show("无法打开浏览器，请手动访问 " + RepoUrl, "打开仓库",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
 
     private static void OpenFile(params string[] names)
     {

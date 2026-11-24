@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using GreenSite.Services;
 
 namespace GreenSite;
@@ -17,6 +18,7 @@ public partial class App : System.Windows.Application
     private static Mutex? _mutex;
     private static EventWaitHandle? _showEvent;
     private static volatile bool _listening;
+    private DispatcherTimer? _tickTimer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -55,6 +57,12 @@ public partial class App : System.Windows.Application
         _mutex = mutex;
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         _listening = true;
+
+        // v1.1.0：统一 15 秒心跳 / 守护 / 快捷方式 / 文件完整性 / 关闭时段检查
+        _tickTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _tickTimer.Tick += (_, _) => AppState.Instance.OnTimerTick();
+        _tickTimer.Start();
+
         _ = Task.Run(ListenShowRequests);
 
         // 开机自启（--minimized）：先用无密码 DPAPI 快照直接启动防护，再创建主窗口。
@@ -99,6 +107,8 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         _listening = false;
+        _tickTimer?.Stop();
+        _tickTimer = null;
         try { _showEvent?.Set(); } catch { /* 退出路径 */ }
         _showEvent?.Dispose();
         _showEvent = null;

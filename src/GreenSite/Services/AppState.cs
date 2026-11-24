@@ -30,6 +30,14 @@ public sealed class AppState
     private SecureString? _sessionPassword;
     private DispatcherTimer? _editLockTimer;
     private bool _autoProtectionStarted;
+    private OptionsStore? _optionsStore;
+    private EncryptedBackupStore? _backupStore;
+    private bool _shieldSuppressed;
+    private string[] _protectedSnapshot = [];
+    private DateTime _lastShortcutCheck = DateTime.MinValue;
+
+    /// <summary>v1.1.0 新增能力配置（独立于 config.bin，无密码依赖）。</summary>
+    public AdvancedOptions AdvancedOptions { get; private set; } = new();
 
     private AppState()
     {
@@ -83,6 +91,11 @@ public sealed class AppState
     {
         _store = new SecureConfigStore(_configDirectory);
         _snapshotStore = new ProtectionSnapshotStore(_configDirectory);
+        _optionsStore = new OptionsStore(_configDirectory);
+        _backupStore = new EncryptedBackupStore(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        AdvancedOptions = _optionsStore.Load();
+        WatchdogService.WriteHeartbeat(_configDirectory);
         IsFirstRun = !_store.Exists;
         if (IsFirstRun || !autoStartLaunch) return;
 
@@ -330,11 +343,171 @@ public sealed class AppState
         StateChanged?.Invoke();
     }
 
+    // ── v1.1.0：高级配置 / 备份 / 自保护 / 守护 / 时段 ──────────
+    /// <summary>保存高级配置并立即重算时段状态。任何异常都吞掉，不影响主流程。</summary>
+    public void SaveAdvancedOptions()
+    {
+        try
+        {
+            AdvancedOptions.Normalize();
+            _optionsStore?.Save(AdvancedOptions);
+        }
+        catch { /* 配置保存失败不阻断 UI */ }
+        ApplyShield();
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 关闭防护时段：到时自动停止拦截，时段结束后自动恢复。
+    /// 这是系统行为（非用户操作），直接调控制器，不经 UI 密码门禁。
+    /// </summary>
+    public void ApplyShield()
+    {
+        if (_config is null || _controller is null)
+        {
+            _shieldSuppressed = false;
+            return;
+        }
+        var suppressed = ShieldScheduleEvaluator.IsSuppressed(AdvancedOptions.ShieldSchedule, DateTime.Now);
+        if (suppressed && !_shieldSuppressed && _controller.IsActive)
+        {
+            _controller.StopProtection();
+            _shieldSuppressed = true;
+            StateChanged?.Invoke();
+        }
+        else if (!suppressed && _shieldSuppressed)
+        {
+            _controller.Start();
+            _shieldSuppressed = false;
+            StateChanged?.Invoke();
+        }
+    }
+
+    /// <summary>设置页调用的别名：时段规则变更后立即重算。</summary>
+    public void RefreshShield() => ApplyShield();
+
+    /// <summary>由 App 的 UI 定时器驱动（约 15 秒一次）：心跳 + 守护 + 快捷方式 + 完整性 + 时段。</summary>
+    public void OnTimerTick()
+    {
+        WatchdogService.WriteHeartbeat(_configDirectory);
+
+        if (AdvancedOptions.WatchdogEnabled && !WatchdogService.IsWatchdogRunning(
+                _configDirectory, WatchdogService.DefaultWatchdogTimeout))
+        {
+            var guard = Path.Combine(AppContext.BaseDirectory, "Guard.exe");
+            if (File.Exists(guard)) WatchdogService.StartWatchdog(guard);
+        }
+
+        if (AdvancedOptions.ShortcutGuardEnabled)
+        {
+            var interval = TimeSpan.FromMinutes(AdvancedOptions.ShortcutCheckMinutes);
+            if (DateTime.Now - _lastShortcutCheck >= interval)
+            {
+                _lastShortcutCheck = DateTime.Now;
+                try
+                {
+                    var exe = Path.Combine(AppContext.BaseDirectory, "GreenSite.exe");
+                    if (!ShortcutGuardService.EnsureCreated(exe))
+                        _lastShortcutCheck = DateTime.Now - interval + TimeSpan.FromMinutes(1);
+                }
+                catch { /* 快捷方式失败下次再试 */ }
+            }
+        }
+
+        if (AdvancedOptions.FileProtectionEnabled && _protectedSnapshot.Length > 0)
+        {
+            var missing = FileProtectionService.MissingFiles(_protectedSnapshot);
+            if (missing.Length > 0 && RestoreBackup() == BackupResult.Success)
+                ApplyFileProtection();
+        }
+
+        ApplyShield();
+    }
+
+    public BackupResult CreateBackup()
+    {
+        try
+        {
+            var files = new List<string>();
+            foreach (var name in new[] { "config.bin", "protection.bin", "options.bin" })
+            {
+                var path = Path.Combine(_configDirectory, name);
+                if (File.Exists(path)) files.Add(path);
+            }
+            return files.Count == 0
+                ? BackupResult.NoBackup
+                : _backupStore!.CreateBackup(files);
+        }
+        catch { return BackupResult.Failed; }
+    }
+
+    public BackupResult RestoreBackup()
+    {
+        try
+        {
+            var result = _backupStore!.RestoreBackup(_configDirectory);
+            if (result == BackupResult.Success)
+            {
+                AdvancedOptions = (_optionsStore?.Load()) ?? new AdvancedOptions();
+                StateChanged?.Invoke();
+            }
+            return result;
+        }
+        catch { return BackupResult.Failed; }
+    }
+
+    /// <summary>配置读取失败时的解包兜底：把单份备份解到临时目录，供用户手工取回。</summary>
+    public bool TryFallbackOpen(out string directory, out string error)
+    {
+        try { return _backupStore!.TryOpenFallback(out directory, out error); }
+        catch (Exception e) { directory = ""; error = e.GetType().Name; return false; }
+    }
+
+    /// <summary>切换文件自保护：开启前先自动备份，随后对受保护清单设置 Deny Delete ACL。</summary>
+    public bool ToggleFileProtection(bool enabled)
+    {
+        try
+        {
+            AdvancedOptions.FileProtectionEnabled = enabled;
+            if (enabled)
+            {
+                CreateBackup(); // 先有备份，再保护，避免「保护了却无法恢复」
+                _optionsStore?.Save(AdvancedOptions);
+                ApplyFileProtection();
+            }
+            else
+            {
+                foreach (var path in _protectedSnapshot)
+                    FileProtectionService.Unprotect(path);
+                _protectedSnapshot = [];
+                _optionsStore?.Save(AdvancedOptions);
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ApplyFileProtection()
+    {
+        try
+        {
+            _protectedSnapshot = FileProtectionService.ProtectedFiles(
+                AppContext.BaseDirectory,
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            foreach (var path in _protectedSnapshot) FileProtectionService.Protect(path);
+        }
+        catch { /* ACL 不支持时降级为仅备份，不阻断 */ }
+    }
+
     // ── 保护开关 ──────────────────────────────────────────────
     /// <summary>从托盘重新开启保护（需密码验证后调用）。</summary>
     public void StartProtection()
     {
         if (IsUnlockRequired) { ShowUnlockRequired(); return; }
+        _shieldSuppressed = false; // 手动开启：时段抑制由下次 tick 重新判定
         _controller!.Start();
         SaveConfig();
         StateChanged?.Invoke();
@@ -344,6 +517,7 @@ public sealed class AppState
     public void CloseProtection()
     {
         if (IsUnlockRequired) { ShowUnlockRequired(); return; }
+        _shieldSuppressed = false;
         _controller!.StopProtection();
         SaveConfig();
         StateChanged?.Invoke();

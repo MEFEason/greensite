@@ -84,11 +84,24 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 - **主界面状态栏防护快捷开关**：左侧状态栏与「状态总览 → 当前状态」卡片各加一枚按钮，点击统一调 `AppState.ToggleProtection()`（门禁判定 + `RequirePassword` + `StartProtection` / `CloseProtection`）；托盘菜单的 `ToggleProtectionFromTray` 也收敛到同一入口，避免三处各写一份条件导致口径漂移。按钮文案与可用状态由 Core 纯逻辑 `AccessPolicy.ToggleProtectionButton` 返回，UI 只负责显示；自启未解锁时显示「需先解锁」并禁用，与托盘门禁一致。自检用例 14 覆盖 16 种状态组合。
 - **卸载验证窗口按钮裁切修复**：旧版 `UninstallGuardWindow` 用固定 `Height="280"` + 单个 `StackPanel`，在 125% DPI 或说明文字换行变多时内容溢出，底部「取消 / 验证并继续」被窗口下边缘裁掉，只剩一条彩色背景。改为 `SizeToContent="Height"` + `MinHeight` + `DockPanel`（按钮 `DockPanel.Dock="Bottom"`），并给两个按钮设 `MinWidth` 与显式 `Foreground`。`verify_product.ps1` 第 11 项静态检查该布局，防止回归。
 
+## 3.5 v1.1.0 行为变更要点
+
+以下为 v1.1.0 相对 v1.0.x 的行为变更，维护时须保持实现与文档 / 自检口径一致。
+
+1. **文件自保护（可开关）**：新增 `FileProtectionService`，对 `config.bin` / `protection.bin` / `options.bin` 及备份文件设置拒绝删除 ACL 并定时校验完整性，文件被删时从加密备份自动恢复；开关状态由 `AdvancedOptions` 承载、`OptionsStore` 持久化。边界：用户级 ACL + 完整性校验，非内核级，**管理员仍可强制删除**；不使用驱动 / 进程注入 / 隐藏启动，避免杀软误报。
+2. **自启文案刷新**：开机自启后主页面与托盘提示统一改为「自启无需密码即自动进入防护；解锁只是为了修改设置 / 关闭保护」；不得再出现旧的「解锁后保护自动开启」口径。
+3. **快捷方式守护（可开关）**：新增 `ShortcutGuardService`，每 n 分钟（1–1440，默认 30）检查公共桌面 `GreenSite.lnk`，缺失时自动重建；公共桌面无写权限时回退当前用户桌面并提示（不静默失败）。开关与周期同属 `AdvancedOptions`。
+4. **安装 / 卸载配置选项**：安装器新增是否覆盖用户配置的选项（默认保留）；卸载时（密码验证通过后）询问是否删除用户配置（密码 / 恢复码 / 规则 / 备份，默认保留，需显式勾选才删），日志目录始终保留。可选安装守护服务（需管理员）；这是 `setup.iss` 的改动，不在代码层做静默删除。
+5. **加密文件备份**：新增 `EncryptedBackupStore`，仅保留单份备份于 `%LOCALAPPDATA%\stgren\bkp`，流程为**先打包 zip → 再 DPAPI 加密**，文件名用 `.idx` / `.dat` 一类混淆后缀（不用 `.zip` / `.bak`）避免被搜索或清理工具命中；软件内提供「立即备份 / 从备份恢复」按钮，配置读取失败时提供解包兜底恢复。删除该备份目录会失去恢复能力。
+6. **守护进程 + 服务**：新增 `WatchdogService`，独立 `Guard.exe` 守护进程定时检测主进程心跳，异常退出后自动拉起；可选 Windows 服务（安装器勾选，需管理员，以 LocalSystem 运行），未安装时使用当前用户自启方式。边界：**无法阻止管理员用任务管理器强制结束**，只能检测并自动恢复；守护进程不隐藏、不注入。
+7. **关于页 GitHub 按钮**：关于页新增「打开 GitHub 仓库」按钮，指向 `https://github.com/MEFEason/greensite`；该页仍只显示 `full` 版本串本身，版本号规范不变。
+8. **关闭防护时间段**：新增 `ShieldScheduleEvaluator`，支持多条「周一~周日 + 起止 `HH:mm`」规则（跨午夜），命中时段自动关闭拦截、结束后自动恢复；未启用或规则为空时不生效，与「关闭保护仅本次会话有效」的既有语义并存。规则存于 `AdvancedOptions` / `OptionsStore`。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **181 条断言 / 14 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **204 条断言 / 15 组用例**：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表
@@ -193,6 +206,10 @@ GreenSite/
 | 未解锁门禁要留三类豁免 | 首启无配置（否则「设置密码页无法退出」回归）、保护未激活的普通冷启动（退出无拦截可解除）、恢复码解锁未重设态（否则忘记旧密码会形成退出僵局）。判定集中在 `AccessPolicy`，不要在 UI 各处分散写条件。 |
 | 对话框不要用固定 `Height` 配单个 `StackPanel` | 高 DPI 缩放或文案换行变多时内容会溢出，底部按钮被裁切且不会报错。用 `SizeToContent="Height"` + `DockPanel`（按钮固定在 `DockPanel.Dock="Bottom"`），并给按钮设 `MinWidth` 与明确前景色。 |
 | 防护开关不要在各 UI 出口重复写门禁 | 托盘、左侧状态栏、状态总览卡片都调 `AppState.ToggleProtection()`，判定与文案统一来自 `AccessPolicy`；分散写条件会出现「托盘要密码、界面按钮不要密码」这类绕过口。 |
+| ACL Deny 不能阻止管理员 | `FileProtectionService` 的拒绝删除 ACL 只是用户级自保护，本机管理员仍可强制删除 / 改写；文案与自检断言都不要宣称「不可删除」，否则构成虚假承诺。 |
+| 服务会话 0 无法直接显示 GUI | 以 LocalSystem 安装的服务运行在 Session 0，不能直接弹主界面 / 托盘；拉起逻辑必须走用户会话中的独立 `Guard.exe` 守护进程（`WatchdogService`），服务只负责检测与触发，不要试图在服务里直接 `Process.Start` 显示窗口。 |
+| 备份文件必须用混淆后缀 | `EncryptedBackupStore` 的备份文件名用 `.idx` / `.dat` 一类混淆后缀，**不要写 `.zip` / `.bak`**，否则易被清理工具按后缀命中删除（即使内容已 DPAPI 加密）。备份仅一份，删除备份目录即失去恢复能力。 |
+| 安装 / 卸载删除用户配置须先做路径安全校验 | 安装覆盖 / 卸载删除选项必须先校验目标路径确实位于用户数据目录内（防路径穿越 / 符号链接误删），且**默认保留**用户配置与日志目录；只有用户显式勾选才删，不要在代码层静默清理。 |
 
 ## 8. 发布流程
 

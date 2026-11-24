@@ -78,6 +78,108 @@ ConfirmUninstall=卸载需要验证管理密码；验证通过后才继续卸载
 // 程序用命名 Mutex 自行处理单实例与退出，安装器不按进程名结束任何进程，避免误杀宿主进程。
 // 卸载收尾只精确清理本程序留下的 PAC 残留，删除后不弹窗。
 
+// ===== 安装/卸载用户配置与守护服务相关全局变量 =====
+var
+  ConfigOptionsPage: TInputOptionWizardPage;   // 安装时的“用户配置”选项页
+  GuardOptionsPage: TInputOptionWizardPage;    // 安装时的“守护服务”选项页
+  OverwriteUserConfig: Boolean;                // 安装时是否覆盖用户配置
+  InstallGuardService: Boolean;                // 安装时是否创建守护服务
+  UninstallDeleteUserConfig: Boolean;          // 卸载时是否删除用户配置
+
+// 删除本程序的用户配置与加密备份。
+// 安全约束：仅当目标路径确实位于 LOCALAPPDATA 下、且命中受控目录名时才删除；
+// 只删除白名单文件与备份目录，不触碰 logs 日志目录；任何异常均静默兜底。
+procedure DeleteGreenSiteUserData;
+var
+  LocalData, GreenDir, BkpDir: String;
+begin
+  try
+    LocalData := ExpandConstant('{localappdata}');
+
+    // 用户配置目录：LOCALAPPDATA 下的 GreenSite
+    GreenDir := AddBackslash(LocalData) + 'GreenSite';
+    if DirExists(GreenDir) then
+    begin
+      // 路径安全校验：必须以 LOCALAPPDATA 开头且命中 GreenSite 目录名。
+      if (Pos(Uppercase(AddBackslash(LocalData)), Uppercase(GreenDir)) = 1) and
+         (Pos('GREENSITE', Uppercase(GreenDir)) > 0) then
+      begin
+        DeleteFile(AddBackslash(GreenDir) + 'config.bin');
+        DeleteFile(AddBackslash(GreenDir) + 'config.bak');
+        DeleteFile(AddBackslash(GreenDir) + 'protection.bin');
+        DeleteFile(AddBackslash(GreenDir) + 'options.bin');
+        // 注意：保留 logs 日志目录，不删除。
+      end;
+    end;
+
+    // 加密备份目录：LOCALAPPDATA 下的 stgren\bkp
+    BkpDir := AddBackslash(LocalData) + 'stgren\bkp';
+    if DirExists(BkpDir) then
+    begin
+      // 路径安全校验：必须以 LOCALAPPDATA 开头且命中 stgren\bkp 目录名。
+      if (Pos(Uppercase(AddBackslash(LocalData)), Uppercase(BkpDir)) = 1) and
+         (Pos('STGREN\BKP', Uppercase(BkpDir)) > 0) then
+        DelTree(BkpDir, True, True, True);
+    end;
+  except
+    // 删除失败不影响安装/卸载流程，静默兜底。
+  end;
+end;
+
+// 安装向导初始化：在 Ready 页之前追加“用户配置”与“守护服务”两个选项页，均默认不勾选。
+// CreateInputOptionPage 的 Exclusive=False 表示复选框（Values[i] 为 Boolean），ListBox=False 表示平铺。
+procedure InitializeWizard;
+begin
+  ConfigOptionsPage := CreateInputOptionPage(
+    wpSelectTasks,
+    '用户配置',
+    '检测到已有用户配置时，可选择保留或覆盖。覆盖会删除本机密码、恢复码、规则与备份，且不可恢复。',
+    '请选择：', False, False);
+  ConfigOptionsPage.Add('覆盖已有用户配置（删除本机密码、恢复码、规则与备份，不可恢复）');
+  ConfigOptionsPage.Values[0] := False;
+
+  GuardOptionsPage := CreateInputOptionPage(
+    ConfigOptionsPage.ID,
+    '守护服务',
+    '安装 Windows 服务以检测主进程异常退出并自动恢复（需管理员权限；用户级安装会跳过）。服务不影响正常卸载，可在卸载时移除。',
+    '请选择：', False, False);
+  GuardOptionsPage.Add('安装 GreenSite 守护服务（需管理员权限）');
+  GuardOptionsPage.Values[0] := False;
+end;
+
+// 安装收尾：按用户选择覆盖配置、创建守护服务；失败均不阻断安装。
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ScExe, SvcParams: String;
+  ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    OverwriteUserConfig := (ConfigOptionsPage <> nil) and ConfigOptionsPage.Values[0];
+    InstallGuardService := (GuardOptionsPage <> nil) and GuardOptionsPage.Values[0];
+
+    // 仅当用户勾选覆盖时删除用户配置，静默完成。
+    if OverwriteUserConfig then
+      DeleteGreenSiteUserData;
+
+    // 仅当用户勾选且当前具备管理员权限时创建守护服务。
+    if InstallGuardService and IsAdmin then
+    begin
+      try
+        ScExe := ExpandConstant('{sys}\sc.exe');
+        ResultCode := 0;
+        SvcParams := 'create GreenSiteGuard binPath= "' + ExpandConstant('{app}\Guard.exe') +
+                     '" start= auto DisplayName= "GreenSite 守护服务"';
+        if Exec(ScExe, SvcParams, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+           (ResultCode = 0) then
+          Exec(ScExe, 'start GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      except
+        // 守护服务安装失败不阻断安装，静默兜底。
+      end;
+    end;
+  end;
+end;
+
 // 卸载门禁：InitializeUninstall 在卸载器最早阶段执行，返回 False 立即终止卸载，
 // 不删除任何文件、不写注册表、不进入任何后续卸载步骤。
 // 主程序以 --verify-uninstall 拉起独立验证窗口（不参与单实例 Mutex、不启动防护），
@@ -113,6 +215,17 @@ begin
     exit;
   end;
 
+  // 仅在管理密码验证通过后才询问是否删除用户配置；默认保留，取消或“否”不影响卸载。
+  // 卸载器在 InitializeUninstall 阶段向导窗口通常尚未创建，故用 MsgBox 询问最稳妥。
+  UninstallDeleteUserConfig := False;
+  if not UninstallSilent then
+  begin
+    if MsgBox('是否同时删除本机用户配置？' + #13#10 +
+              '包括管理密码、恢复码、规则、加密备份。默认保留。',
+              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      UninstallDeleteUserConfig := True;
+  end;
+
   Result := True;
 end;
 
@@ -126,6 +239,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   PacValue: String;
+  ResultCode: Integer;
+  ScExe: String;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
@@ -139,6 +254,24 @@ begin
           'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
           'AutoConfigURL');
       end;
+    end;
+
+    // 用户勾选时清理用户配置与备份，保留 logs，静默完成。
+    if UninstallDeleteUserConfig then
+      DeleteGreenSiteUserData;
+
+    // 移除守护服务：服务存在则先停止再删除，失败静默。
+    try
+      ScExe := ExpandConstant('{sys}\sc.exe');
+      ResultCode := 0;
+      if Exec(ScExe, 'query GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+         (ResultCode = 0) then
+      begin
+        Exec(ScExe, 'stop GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        Exec(ScExe, 'delete GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      end;
+    except
+      // 服务移除失败不影响卸载，静默兜底。
     end;
   end;
 end;

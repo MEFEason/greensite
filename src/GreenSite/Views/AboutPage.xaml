@@ -38,6 +38,20 @@
                 </StackPanel>
             </Border>
 
+            <!-- 项目仓库 -->
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="项目仓库" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Style="{StaticResource BodyTextStyle}" Margin="0,8,0,0"
+                               Text="源代码、问题反馈与最新版本发布均在项目仓库。" />
+                    <Button x:Name="OpenGitHubButton" Content="打开 GitHub 仓库"
+                            Click="OpenGitHub_Click" Style="{StaticResource PrimaryButtonStyle}"
+                            HorizontalAlignment="Left" Margin="0,14,0,0" />
+                    <TextBlock Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0"
+                               Text="https://github.com/MEFEason/greensite" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
             <!-- 设计致谢 -->
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel>
