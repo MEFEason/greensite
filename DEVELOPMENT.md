@@ -123,6 +123,15 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 6. **setup.iss 服务默认勾选**：安装器守护服务选项由可选勾选改为默认勾选（安装服务需管理员权限）；用户级安装不装服务时降级为 `--watchdog` 用户级守护。
 7. **边界**：普通用户无法结束 LocalSystem 服务（结束需管理员权限）；已提权管理员仍可停止服务，守护只能检测并恢复。不安装驱动、不做 Protected Process（需 EV 证书 + WHQL，不具备）。
 
+## 3.8 v1.1.3 行为变更要点（服务 SCM 连接与自动恢复）
+
+1. **服务必须通过 SCM 分发器启动**：`Guard.exe` 无参数（服务模式）时调用 `StartServiceCtrlDispatcher(SERVICE_TABLE_ENTRY[])`，在 `ServiceMain` 回调内注册 `RegisterServiceCtrlHandlerEx`、上报 `StartPending`/`Running` 并启动 15 秒 tick 线程。旧实现直接在 `Main` 调 `RegisterServiceCtrlHandlerEx`，SCM 等不到连接 → 事件 7009 / 错误 1053，服务从未真正运行。
+2. **委托生命周期**：`ServiceMainDelegate` 与 `SERVICE_TABLE_ENTRY.ServiceProc` 函数指针必须由静态字段持有，否则 GC 回收后回调指针失效。终止项两个指针均为零。
+3. **UserDataDir 保持**：服务主函数内读 `HKLM\SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters\UserDataDir`（v1.1.2 已写入且实测正确），再进入跨会话拉起逻辑。
+4. **失败自动恢复**：安装时 `sc.exe failure GreenSiteGuard reset= 86400 actions= restart/5000/restart/5000/restart/5000`；进程崩溃 / 被杀（非正常停止控制）后由 SCM 5 秒后重启。管理员主动 `stop` 属正常控制请求，不触发重启。
+5. **覆盖安装清理旧服务**：`sc.exe stop` + `delete` 先移除同名服务，再 `create`，否则「服务已存在」会让 UserDataDir / failure / start 全部跳过。
+6. **自检 / 门禁**：新增 4 条自检断言（Guard 源码含 `StartServiceCtrlDispatcher` / `ServiceMain`，setup.iss 含 `failure GreenSiteGuard restart/5000` 与 `delete GreenSiteGuard`）；`verify_product.ps1` #14 新增 2 项产物静态检查（`StartServiceCtrlDispatcher`/`ServiceTableEntry` 编入 Guard.dll、setup.iss 恢复配置）。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`

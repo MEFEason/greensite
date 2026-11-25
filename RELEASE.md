@@ -6,6 +6,20 @@ GreenSite 是面向 Windows 的单进程、用户级、零 UAC 网站访问控�
 
 ## 更新内容
 
+### v1.1.3（服务 SCM 连接与自动恢复修复）
+
+> 修复 v1.1.2 本地安装实测的 2 个 bug：服务启动报 1053（事件 7009 等待连接超时）、服务进程被结束后无兜底不自动恢复。
+
+- **修复：服务启动失败（1053 / 事件 7009「等待服务连接超时 30000ms」）**
+  - 根因：v1.1.2 的最小 P/Invoke 服务实现在 `Main` 里直接调用 `RegisterServiceCtrlHandlerEx`，**从未调用 `StartServiceCtrlDispatcher`**，SCM 永远等不到服务连接，30 秒后判定启动失败。服务此前从未真正运行过。
+  - 可观察行为：安装后服务停在「已停止」，手动启动弹「错误 1053：服务没有及时响应启动或控制请求」；系统日志记录 7000 + 7009。
+  - 修复：补 `StartServiceCtrlDispatcher` + `SERVICE_TABLE_ENTRY` + `ServiceMain` 回调（委托作为静态字段持有，防止 GC 回收函数指针）；注册控制处理器与状态上报移入 `ServiceMain`。UserDataDir 参数读取正确（实测指向 `%LOCALAPPDATA%\GreenSite`），无需改动。
+- **修复：服务进程被结束后无兜底**
+  - 根因：服务未配置失败恢复动作，进程异常终止后 SCM 不会重启。
+  - 修复：安装时执行 `sc.exe failure GreenSiteGuard reset= 86400 actions= restart/5000/restart/5000/restart/5000`，服务崩溃或被杀后由 SCM 在 5 秒后自动重启。覆盖安装时先 `stop` + `delete` 旧服务，避免 `sc create` 因「服务已存在」失败导致后续配置全部跳过。
+  - 边界：已提权管理员仍可主动停止服务（停止属于正常控制请求，不触发失败重启）；普通用户无法结束 LocalSystem 服务。
+- **门禁记录**：按 beta→独立验证→release 门禁发布。
+
 ### v1.1.2（守护架构修复）
 
 > 修复 v1.1.1「管理员守护开关（UAC 提权）」实测的 4 个 bug：UAC 没弹、托盘能结束守护、服务在 Session 0 直接 `Process.Start` 导致主程序「未响应」、守护开关无密码。UAC 提权路径整体移除，改由 LocalSystem Windows 服务作为唯一高权限守护。

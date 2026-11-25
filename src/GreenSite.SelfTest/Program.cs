@@ -930,6 +930,10 @@ internal static class Program
                     guardSrc.Contains("CreateProcessAsUser", StringComparison.Ordinal));
                 Check("v1.1.2 Guard 源码含 CreateEnvironmentBlock",
                     guardSrc.Contains("CreateEnvironmentBlock", StringComparison.Ordinal));
+                Check("v1.1.3 Guard 源码含 StartServiceCtrlDispatcher（修复 SCM 1053）",
+                    guardSrc.Contains("StartServiceCtrlDispatcher", StringComparison.Ordinal));
+                Check("v1.1.3 Guard 源码含 ServiceMain 回调",
+                    guardSrc.Contains("ServiceMain", StringComparison.Ordinal));
                 Check("v1.1.2 Guard 托盘无退出守护菜单",
                     !guardSrc.Contains("退出守护", StringComparison.Ordinal) &&
                     !guardSrc.Contains("退出管理员守护", StringComparison.Ordinal));
@@ -947,6 +951,11 @@ internal static class Program
                     issSrc.Contains("UserDataDir", StringComparison.Ordinal));
                 Check("v1.1.2 setup.iss 含 RegWriteStringValue",
                     issSrc.Contains("RegWriteStringValue", StringComparison.Ordinal));
+                Check("v1.1.3 setup.iss 失败后由 SCM 自动重启服务",
+                    issSrc.Contains("failure GreenSiteGuard", StringComparison.Ordinal) &&
+                    issSrc.Contains("restart/5000", StringComparison.Ordinal));
+                Check("v1.1.3 setup.iss 覆盖安装先删旧服务",
+                    issSrc.Contains("delete GreenSiteGuard", StringComparison.Ordinal));
             }
         }
         finally

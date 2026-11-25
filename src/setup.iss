@@ -168,6 +168,11 @@ begin
       try
         ScExe := ExpandConstant('{sys}\sc.exe');
         ResultCode := 0;
+
+        // v1.1.3：覆盖安装时先停并删除旧服务，否则 sc create 报「服务已存在」而后续全部跳过。
+        Exec(ScExe, 'stop GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        Exec(ScExe, 'delete GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
         SvcParams := 'create GreenSiteGuard binPath= "' + ExpandConstant('{app}\Guard.exe') +
                      '" start= auto DisplayName= "GreenSite 守护服务"';
         if Exec(ScExe, SvcParams, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
@@ -177,6 +182,11 @@ begin
           RegWriteStringValue(HKEY_LOCAL_MACHINE,
             'SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters',
             'UserDataDir', ExpandConstant('{localappdata}\GreenSite'));
+
+          // v1.1.3：服务进程异常结束（被杀 / 崩溃）后由 SCM 自动重启，5 秒间隔、无限次。
+          Exec(ScExe, 'failure GreenSiteGuard reset= 86400 actions= restart/5000/restart/5000/restart/5000',
+            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
           Exec(ScExe, 'start GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
         end;
       except

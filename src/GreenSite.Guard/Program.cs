@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using GreenSite.Core.Core;
 
@@ -25,8 +25,7 @@ internal static class Program
             return;
         }
 
-        // 服务：从注册表读取安装时写入的真实用户数据目录（LocalSystem 的 LOCALAPPDATA 是 systemprofile）。
-        _dataDir = ReadServiceUserDataDir() ?? WatchdogService.DefaultDirectory;
+        // 服务：必须通过 SCM 分发器启动；服务主函数内再读注册表参数。
         RunService();
     }
 
@@ -110,10 +109,33 @@ internal static class Program
 
     private static void RunService()
     {
+        // v1.1.3：SCM 要求进程调用 StartServiceCtrlDispatcher 才能建立控制连接；
+        // 旧实现直接 RegisterServiceCtrlHandlerEx，SCM 等不到连接 → 事件 7009 / 错误 1053。
+        // 委托必须作为静态字段持有，否则被 GC 回收后函数指针失效。
+        _serviceMain = ServiceMain;
+        var table = new[]
+        {
+            new ServiceTableEntry
+            {
+                ServiceName = Marshal.StringToHGlobalUni("GreenSiteGuard"),
+                ServiceProc = Marshal.GetFunctionPointerForDelegate(_serviceMain),
+            },
+            new ServiceTableEntry(), // 终止项：两个指针均为零
+        };
+        StartServiceCtrlDispatcher(table);
+    }
+
+    private static ServiceMainDelegate? _serviceMain;
+
+    private static void ServiceMain(int argc, IntPtr argv)
+    {
+        // 服务主函数运行在 SCM 分发的线程上：先注册控制处理器，再报 StartPending。
         _statusHandle = RegisterServiceCtrlHandlerEx("GreenSiteGuard", Handler, IntPtr.Zero);
         if (_statusHandle == IntPtr.Zero) return;
 
         SetState(ServiceState.StartPending);
+        _dataDir = ReadServiceUserDataDir() ?? WatchdogService.DefaultDirectory;
+
         _worker = new Thread(() =>
         {
             SetState(ServiceState.Running);
@@ -182,6 +204,19 @@ internal static class Program
     }
 
     private delegate int HandlerEx(int control, int eventType, IntPtr data, IntPtr context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate void ServiceMainDelegate(int argc, IntPtr argv);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ServiceTableEntry
+    {
+        public IntPtr ServiceName; // LPWSTR
+        public IntPtr ServiceProc; // LPTHREAD_START_ROUTINE
+    }
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool StartServiceCtrlDispatcher([In] ServiceTableEntry[] serviceTable);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ServiceStatus

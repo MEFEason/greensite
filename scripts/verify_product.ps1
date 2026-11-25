@@ -225,6 +225,10 @@ $guardV112Ok = (Test-BinaryHasText $guardBytesV112 'WTSQueryUserToken') -and
                (Test-BinaryHasText $guardBytesV112 'CreateProcessAsUser')
 Report $guardV112Ok 'v1.1.2 Guard.dll 含跨会话拉起 API（WTSQueryUserToken/CreateProcessAsUser）' `
     'ASCII/Unicode 解码均缺少 WTSQueryUserToken 或 CreateProcessAsUser'
+$guardScmV113Ok = (Test-BinaryHasText $guardBytesV112 'StartServiceCtrlDispatcher') -and
+                  (Test-BinaryHasText $guardBytesV112 'ServiceTableEntry')
+Report $guardScmV113Ok 'v1.1.3 Guard.dll 含 SCM 分发 API（修复 1053）' `
+    '缺少 StartServiceCtrlDispatcher 或 ServiceTableEntry'
 
 # 托盘源码：Guard/Program.cs 文本不得出现退出守护菜单（普通用户不能结束高权限守护）。
 $guardSrcV112 = Join-Path $srcDir 'GreenSite.Guard\Program.cs'
@@ -277,6 +281,11 @@ $issV112Ok = ($issTextV112.IndexOf('UserDataDir', [System.StringComparison]::Ord
              ($issTextV112.IndexOf('RegWriteStringValue', [System.StringComparison]::Ordinal) -ge 0)
 Report $issV112Ok 'v1.1.2 setup.iss 写入 UserDataDir 供服务读取' `
     '缺少 UserDataDir 或 RegWriteStringValue'
+$issScmV113Ok = ($issTextV112.IndexOf('failure GreenSiteGuard', [System.StringComparison]::Ordinal) -ge 0) -and
+                ($issTextV112.IndexOf('restart/5000', [System.StringComparison]::Ordinal) -ge 0) -and
+                ($issTextV112.IndexOf('delete GreenSiteGuard', [System.StringComparison]::Ordinal) -ge 0)
+Report $issScmV113Ok 'v1.1.3 setup.iss 含失败自动重启与覆盖安装删旧服务' `
+    '缺少 failure/delete 服务配置'
 
 # 15. Guard.exe 必须是 GUI 子系统：OutputType=Exe 会生成 Console 子系统，
 #     启动守护时伴随一个 cmd 窗口（v1.1.1 beta 实测问题），改为 WinExe 后 PE Subsystem=2。
