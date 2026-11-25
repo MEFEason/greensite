@@ -126,7 +126,7 @@ begin
   end;
 end;
 
-// 安装向导初始化：在 Ready 页之前追加“用户配置”与“守护服务”两个选项页，均默认不勾选。
+// 安装向导初始化：在 Ready 页之前追加“用户配置”（默认不勾选）与“守护服务”（v1.1.2 默认勾选）两个选项页。
 // CreateInputOptionPage 的 Exclusive=False 表示复选框（Values[i] 为 Boolean），ListBox=False 表示平铺。
 procedure InitializeWizard;
 begin
@@ -141,10 +141,10 @@ begin
   GuardOptionsPage := CreateInputOptionPage(
     ConfigOptionsPage.ID,
     '守护服务',
-    '安装 Windows 服务以检测主进程异常退出并自动恢复（需管理员权限；用户级安装会跳过）。服务不影响正常卸载，可在卸载时移除。',
+    '推荐：安装 Windows 服务（LocalSystem），检测主进程异常退出并在用户会话自动恢复；普通用户无法结束服务。需管理员权限，用户级安装会跳过。默认勾选；可在卸载时移除。',
     '请选择：', False, False);
-  GuardOptionsPage.Add('安装 GreenSite 守护服务（需管理员权限）');
-  GuardOptionsPage.Values[0] := False;
+  GuardOptionsPage.Add('安装 GreenSite 守护服务（LocalSystem，普通用户无法结束，需管理员权限）');
+  GuardOptionsPage.Values[0] := True;  // v1.1.2：唯一高权限守护，默认勾选
 end;
 
 // 安装收尾：按用户选择覆盖配置、创建守护服务；失败均不阻断安装。
@@ -172,7 +172,13 @@ begin
                      '" start= auto DisplayName= "GreenSite 守护服务"';
         if Exec(ScExe, SvcParams, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
            (ResultCode = 0) then
+        begin
+          // v1.1.2：把安装用户的数据目录写进服务参数，LocalSystem 才能读对心跳/配置。
+          RegWriteStringValue(HKEY_LOCAL_MACHINE,
+            'SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters',
+            'UserDataDir', ExpandConstant('{localappdata}\GreenSite'));
           Exec(ScExe, 'start GreenSiteGuard', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        end;
       except
         // 守护服务安装失败不阻断安装，静默兜底。
       end;

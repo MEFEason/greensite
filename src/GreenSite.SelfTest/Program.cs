@@ -863,55 +863,95 @@ internal static class Program
             try { Directory.Delete(v11Dir, recursive: true); } catch { }
         }
 
-        // ── 用例 16：v1.1.1 管理员守护开关（选项往返 / 提权心跳 / 关闭语义）──
-        var elevatedDir = Path.Combine(Path.GetTempPath(),
-            "greensite-v111-elevated-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(elevatedDir);
+        // ── 用例 16：v1.1.2 LocalSystem 服务单一高权限守护 ──
+        // 从源码根目录读文本做静态断言：不启动进程、不触发 UAC、不弹窗、不读真实注册表。
+        static string? FindRepoRoot()
+        {
+            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "src", "setup.iss")) &&
+                    File.Exists(Path.Combine(dir.FullName, "src", "GreenSite.Guard", "Program.cs")))
+                    return dir.FullName;
+            }
+            return null;
+        }
+
+        static string ExtractMethod(string source, string signature)
+        {
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            if (start < 0) return "";
+            var open = source.IndexOf('{', start);
+            if (open < 0) return "";
+            var depth = 0;
+            for (var i = open; i < source.Length; i++)
+            {
+                if (source[i] == '{') depth++;
+                else if (source[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return source.Substring(open, i - open + 1);
+                }
+            }
+            return "";
+        }
+
+        var v112Dir = Path.Combine(Path.GetTempPath(),
+            "greensite-v112-watchdog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(v112Dir);
         try
         {
-            var elevatedOpts = new AdvancedOptions();
-            Check("v1.1.1 管理员守护默认关闭", !elevatedOpts.ElevatedWatchdogEnabled);
+            Equal("v1.1.2 服务读用户目录的注册表参数名", "UserDataDir",
+                WatchdogService.ServiceUserDataParam);
+            Equal("v1.1.2 守护关闭标记文件名", "watchdog-disabled.bin",
+                WatchdogService.WatchdogDisableFile);
 
-            elevatedOpts.ElevatedWatchdogEnabled = true;
-            var elevatedStore = new OptionsStore(elevatedDir);
-            elevatedStore.Save(elevatedOpts);
-            Check("v1.1.1 options.bin 往返保留管理员守护开关",
-                elevatedStore.Load().ElevatedWatchdogEnabled);
-            Check("v1.1.1 Copy() 保留管理员守护开关", elevatedOpts.Copy().ElevatedWatchdogEnabled);
-            elevatedOpts.Normalize();
-            Check("v1.1.1 Normalize() 不重置管理员守护开关", elevatedOpts.ElevatedWatchdogEnabled);
+            var flagPath = WatchdogService.DisableFlagPath(v112Dir);
+            Equal("v1.1.2 关闭标记路径文件名正确", WatchdogService.WatchdogDisableFile,
+                Path.GetFileName(flagPath));
+            Check("v1.1.2 关闭标记路径位于传入目录下",
+                string.Equals(Path.GetDirectoryName(flagPath), Path.GetFullPath(v112Dir),
+                    StringComparison.OrdinalIgnoreCase));
 
-            // 配置关闭语义：将 options.bin 写回 false，无密码读回即为「守护应退出」依据
-            elevatedOpts.ElevatedWatchdogEnabled = false;
-            elevatedStore.Save(elevatedOpts);
-            var closedOpts = elevatedStore.Load();
-            Check("v1.1.1 配置关闭后读回为 false", !closedOpts.ElevatedWatchdogEnabled);
-            Check("v1.1.1 配置关闭 → 管理员守护判定退出",
-                WatchdogService.ShouldElevatedWatchdogExit(closedOpts));
-            Check("v1.1.1 默认配置 → 管理员守护判定退出",
-                WatchdogService.ShouldElevatedWatchdogExit(new AdvancedOptions()));
-            Check("v1.1.1 空配置 → 管理员守护判定退出",
-                WatchdogService.ShouldElevatedWatchdogExit(null));
-            Check("v1.1.1 配置开启 → 管理员守护判定继续运行",
-                !WatchdogService.ShouldElevatedWatchdogExit(
-                    new AdvancedOptions { ElevatedWatchdogEnabled = true }));
+            Check("v1.1.2 初始未关闭守护", !WatchdogService.IsWatchdogDisabled(v112Dir));
+            WatchdogService.SetWatchdogDisabled(v112Dir, true);
+            Check("v1.1.2 写标记后判定为已关闭", WatchdogService.IsWatchdogDisabled(v112Dir));
+            WatchdogService.SetWatchdogDisabled(v112Dir, false);
+            Check("v1.1.2 删标记后判定为未关闭", !WatchdogService.IsWatchdogDisabled(v112Dir));
 
-            Equal("v1.1.1 提权守护参数常量", "--elevated-watchdog",
-                WatchdogService.ElevatedWatchdogArgument);
-            Equal("v1.1.1 提权心跳文件名", "watchdog-elevated.bin",
-                Path.GetFileName(WatchdogService.ElevatedHeartbeatPath(elevatedDir)));
-            WatchdogService.WriteElevatedWatchdogHeartbeat(elevatedDir);
-            Check("v1.1.1 提权心跳新鲜判定",
-                WatchdogService.IsElevatedWatchdogRunning(elevatedDir, TimeSpan.FromSeconds(5)));
-            Check("v1.1.1 提权心跳超时判定",
-                !WatchdogService.IsElevatedWatchdogRunning(elevatedDir, TimeSpan.Zero));
-            Check("v1.1.1 提权心跳与普通心跳文件互不干扰",
-                Path.GetFileName(WatchdogService.HeartbeatPath(elevatedDir)) !=
-                Path.GetFileName(WatchdogService.ElevatedHeartbeatPath(elevatedDir)));
+            var repoRoot = FindRepoRoot();
+            Check("v1.1.2 可定位仓库源码根目录", repoRoot is not null);
+            if (repoRoot is not null)
+            {
+                var guardSrc = File.ReadAllText(Path.Combine(repoRoot,
+                    "src", "GreenSite.Guard", "Program.cs"));
+                Check("v1.1.2 Guard 源码含 WTSQueryUserToken",
+                    guardSrc.Contains("WTSQueryUserToken", StringComparison.Ordinal));
+                Check("v1.1.2 Guard 源码含 CreateProcessAsUser",
+                    guardSrc.Contains("CreateProcessAsUser", StringComparison.Ordinal));
+                Check("v1.1.2 Guard 源码含 CreateEnvironmentBlock",
+                    guardSrc.Contains("CreateEnvironmentBlock", StringComparison.Ordinal));
+                Check("v1.1.2 Guard 托盘无退出守护菜单",
+                    !guardSrc.Contains("退出守护", StringComparison.Ordinal) &&
+                    !guardSrc.Contains("退出管理员守护", StringComparison.Ordinal));
+
+                var settingsSrc = File.ReadAllText(Path.Combine(repoRoot,
+                    "src", "GreenSite", "Views", "SettingsPage.xaml.cs"));
+                var watchdogMethod = ExtractMethod(settingsSrc, "private void Watchdog_Changed");
+                Check("v1.1.2 Watchdog_Changed 内含 RequirePassword 密码门禁",
+                    watchdogMethod.Contains("RequirePassword", StringComparison.Ordinal));
+                Check("v1.1.2 设置页源码不含 ElevatedWatchdogCheck",
+                    !settingsSrc.Contains("ElevatedWatchdogCheck", StringComparison.Ordinal));
+
+                var issSrc = File.ReadAllText(Path.Combine(repoRoot, "src", "setup.iss"));
+                Check("v1.1.2 setup.iss 含 UserDataDir",
+                    issSrc.Contains("UserDataDir", StringComparison.Ordinal));
+                Check("v1.1.2 setup.iss 含 RegWriteStringValue",
+                    issSrc.Contains("RegWriteStringValue", StringComparison.Ordinal));
+            }
         }
         finally
         {
-            try { Directory.Delete(elevatedDir, recursive: true); } catch { }
+            try { Directory.Delete(v112Dir, recursive: true); } catch { }
         }
 
         Console.WriteLine($"结果：通过 {_pass} / 失败 {_fail}");

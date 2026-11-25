@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Security;
 using System.Windows.Threading;
 using GreenSite.Core.Core;
@@ -391,20 +391,13 @@ public sealed class AppState
     {
         WatchdogService.WriteHeartbeat(_configDirectory);
 
-        if (AdvancedOptions.WatchdogEnabled)
+        if (AdvancedOptions.WatchdogEnabled &&
+            !WatchdogService.IsWatchdogDisabled(_configDirectory) &&
+            !WatchdogService.IsWatchdogRunning(_configDirectory, WatchdogService.DefaultWatchdogTimeout))
         {
+            // 安装了服务时服务会写 watchdog.bin；未安装则拉起用户级守护进程。
             var guard = Path.Combine(AppContext.BaseDirectory, "Guard.exe");
-            if (File.Exists(guard))
-            {
-                // v1.1.1：UAC 提权无法在无人值守的自启路径静默完成。
-                // 管理员守护心跳消失后自动降级为普通守护；用户可在设置页再次授权恢复。
-                var elevatedAlive = AdvancedOptions.ElevatedWatchdogEnabled &&
-                    WatchdogService.IsElevatedWatchdogRunning(
-                        _configDirectory, WatchdogService.DefaultWatchdogTimeout);
-                var anyAlive = WatchdogService.IsWatchdogRunning(
-                    _configDirectory, WatchdogService.DefaultWatchdogTimeout);
-                if (!elevatedAlive && !anyAlive) WatchdogService.StartWatchdog(guard);
-            }
+            if (File.Exists(guard)) WatchdogService.StartWatchdog(guard);
         }
 
         if (AdvancedOptions.ShortcutGuardEnabled)

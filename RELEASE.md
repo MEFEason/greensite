@@ -6,7 +6,29 @@ GreenSite 是面向 Windows 的单进程、用户级、零 UAC 网站访问控�
 
 ## 更新内容
 
-### v1.1.1（管理员守护开关）
+### v1.1.2（守护架构修复）
+
+> 修复 v1.1.1「管理员守护开关（UAC 提权）」实测的 4 个 bug：UAC 没弹、托盘能结束守护、服务在 Session 0 直接 `Process.Start` 导致主程序「未响应」、守护开关无密码。UAC 提权路径整体移除，改由 LocalSystem Windows 服务作为唯一高权限守护。
+
+- **修复：UAC 提权守护不弹 UAC**
+  - 根因：v1.1.1 依赖 UAC runas 提权拉起 `Guard.exe`，实测提权未生效，守护仍以普通权限运行，无法承担高权限守护职责。
+  - 可观察行为：移除 `ElevatedWatchdogEnabled` 及设置页「管理员守护（UAC 提权）」开关与相关 API，不再弹 UAC；改由安装器安装的 LocalSystem Windows 服务（`GreenSiteGuard`）作为唯一高权限守护，服务选项默认勾选。
+  - 边界：普通用户无法结束该服务（结束需管理员权限）；已提权管理员仍可停止服务，守护只能检测并恢复。不安装驱动、不做 Protected Process（需 EV 证书 + WHQL，不具备）。
+- **修复：用户级守护托盘可结束守护**
+  - 根因：v1.1.1 用户级守护的托盘保留退出菜单，普通用户可从托盘直接结束守护进程。
+  - 可观察行为：用户级守护（`--watchdog`，无服务时降级）托盘移除退出菜单，改为读 `%LOCALAPPDATA%\GreenSite\watchdog-disabled.bin` 标记自检退出；关闭守护须通过设置页 + 管理密码。
+  - 边界：全部守护开关（启用 / 关闭守护进程）走 `RequirePassword` 密码门禁；用户无法从托盘绕过密码结束守护。
+- **修复：服务在 Session 0 直接 `Process.Start` 导致主程序「未响应」**
+  - 根因：LocalSystem 服务运行在 Session 0，直接 `Process.Start` 拉起 GUI 主程序会落到 Session 0，窗口与托盘不可见 / 表现为「未响应」。
+  - 可观察行为：服务从 `HKLM\SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters\UserDataDir`（REG_SZ，安装时写为 `{localappdata}\GreenSite`）读取真实用户数据目录，经 `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` + `DuplicateTokenEx` + `CreateEnvironmentBlock` + `CreateProcessAsUser` 在活动用户会话拉起主程序。
+  - 边界：主程序仍是普通用户权限，不进入「全面管理员模式」；守护进程不隐藏、不注入。
+- **修复：守护开关无密码门禁**
+  - 根因：v1.1.1 守护进程开关未接入管理密码验证，任何用户可随意开关守护。
+  - 可观察行为：启用 / 关闭守护进程的全部开关统一走 `RequirePassword` 密码门禁；关闭守护只允许通过设置页 + 管理密码完成，用户级守护读 `watchdog-disabled.bin` 标记自检退出。
+  - 边界：与既有密码门禁（启动 / 改规则 / 关闭保护 / 退出）一致，不新增无密码绕过口。
+- **beta → release 门禁**：按 beta→独立验证→release 门禁发布。
+
+### v1.1.1（管理员守护开关）— 已被 v1.1.2 替代（UAC 提权路径已移除）
 
 - **新增：管理员守护开关（UAC 提权，需先启用守护进程）**
   - 根因：v1.1.0 的守护进程以普通用户权限运行，同会话下普通用户可在任务管理器结束它，主进程被强杀后无法自动恢复。

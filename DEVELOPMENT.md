@@ -99,6 +99,8 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 
 ## 3.6 v1.1.1 行为变更要点（管理员守护开关）
 
+> **状态：v1.1.1 提权方案已被 v1.1.2 替代**（UAC 提权路径已移除，见「3.7 v1.1.2 行为变更要点」）；本节仅作历史契约留存。
+
 以下为 v1.1.1 相对 v1.1.0 的契约，维护时须保持实现 / 文档 / 自检口径一致。
 
 1. **管理员守护开关（UAC 提权）**：设置页「守护进程」卡片新增「管理员守护（UAC 提权，普通用户无法结束守护进程）」开关，须先勾选「启用守护进程」才可用；勾选时弹 UAC，守护进程 `Guard.exe` 以管理员完整性级别运行。开关状态由 `AdvancedOptions.ElevatedWatchdogEnabled` 承载、`OptionsStore` 持久化到 `options.bin`。边界：能阻止同会话低完整性级别的普通用户在任务管理器结束守护进程，从而主进程被结束后自动恢复；**不能阻止已提权管理员强制结束**。
@@ -109,11 +111,23 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 6. **不影响安装器可选服务**：v1.1.0 安装器可选 Windows 服务仍是安装时选项，本次未改；管理员守护是独立于该服务的用户会话侧机制。
 7. **自检项（与只读门禁同步）**：`src/GreenSite.SelfTest` 以纯逻辑 / 文件心跳方式覆盖 `AdvancedOptions.ElevatedWatchdogEnabled` 契约，以及 `WatchdogService.ElevatedWatchdogArgument` / `ElevatedHeartbeatPath` / `WriteElevatedWatchdogHeartbeat` / `IsElevatedWatchdogRunning` / `ShouldElevatedWatchdogExit` 的语义（含 `Guard.exe` 读取 `options.bin` 发现配置为 false 时自检退出）。按契约**不真实触发 UAC / 启动进程 / 弹窗**，`StartElevatedWatchdog` / `LaunchMainDeescalated` 这类进程触发 API 不由自检调用，仅靠实现本身与产物字符串静态门禁覆盖。`scripts/verify_product.ps1` 只读静态门禁检查：`Core.dll` 的 `ElevatedWatchdogEnabled` / `--elevated-watchdog`、`GreenSite.dll` 的 `ElevatedWatchdogCheck`、`Guard.exe` 的提权参数 / 选项，以及 `SettingsPage.xaml` 的 `x:Name="ElevatedWatchdogCheck"` 与 `ElevatedWatchdog_Changed`，防止回归。
 
+## 3.7 v1.1.2 行为变更要点
+
+以下为 v1.1.2 相对 v1.1.1 的契约；v1.1.1 的 UAC 提权守护方案整体移除，改由 LocalSystem Windows 服务作为单一高权限守护。
+
+1. **移除项清单**：移除 `AdvancedOptions.ElevatedWatchdogEnabled` 及设置页「管理员守护（UAC 提权）」开关与相关提权路径；移除 `WatchdogService` 的 `ElevatedWatchdogArgument` / `ElevatedHeartbeatPath` / `WriteElevatedWatchdogHeartbeat` / `IsElevatedWatchdogRunning` / `ShouldElevatedWatchdogExit` / `StartElevatedWatchdog` / `LaunchMainDeescalated` 等 UAC 提权相关 API，以及心跳文件 `watchdog-elevated.bin`；`Guard.exe` 不再以管理员完整性级别运行，不再经 `explorer.exe` 降权代启动主程序。
+2. **UserDataDir 注册表参数**：服务从 `HKLM\SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters\UserDataDir`（REG_SZ）读取真实用户数据目录，安装时写为 `{localappdata}\GreenSite`，避免 Session 0 服务与用户登录目录错配。
+3. **CreateProcessAsUser 跨会话启动链路**：LocalSystem 服务（`GreenSiteGuard`）不再在 Session 0 直接 `Process.Start` GUI，而是 `WTSGetActiveConsoleSessionId` → `WTSQueryUserToken` → `DuplicateTokenEx` → `CreateEnvironmentBlock` → `CreateProcessAsUser` 在活动用户会话拉起主程序，修复「未响应」；主程序仍是普通用户权限。
+4. **watchdog-disabled.bin 标记与托盘无退出**：用户级守护（`--watchdog`，无服务时降级）托盘移除退出菜单；关闭守护须通过设置页 + 管理密码，守护读 `%LOCALAPPDATA%\GreenSite\watchdog-disabled.bin` 标记自检退出，不可从托盘绕过。
+5. **全部守护开关密码门禁**：启用 / 关闭守护进程的所有开关统一走 `RequirePassword` 密码门禁，与启动 / 改规则 / 关闭保护 / 退出的既有门禁一致。
+6. **setup.iss 服务默认勾选**：安装器守护服务选项由可选勾选改为默认勾选（安装服务需管理员权限）；用户级安装不装服务时降级为 `--watchdog` 用户级守护。
+7. **边界**：普通用户无法结束 LocalSystem 服务（结束需管理员权限）；已提权管理员仍可停止服务，守护只能检测并恢复。不安装驱动、不做 Protected Process（需 EV 证书 + WHQL，不具备）。
+
 ## 4. 自检与只读体检
 
 ### 自检 `scripts/selftest.ps1`
 
-调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），共 **204 条断言 / 15 组用例**：
+调用 `src/GreenSite.SelfTest`（手写断言 runner，零 NuGet 测试框架），用例组数与断言条数**以 `src/GreenSite.SelfTest/Program.cs` 实际输出为准**（此处不写死）；v1.1.0 基线用例组如下：
 
 1. 规则规范化与后缀匹配
 2. 白名单优先于限制列表
@@ -130,7 +144,7 @@ $env:GREENSITE_SEMVER='0.9.1'; $env:GREENSITE_CHANNEL='beta'; ./scripts/build.ps
 13. 卸载管理密码门禁（正确 / 错误 / 空密码 / 篡改配置 / 无配置）
 14. 状态栏快捷开关状态矩阵（16 种门禁组合、文案与可用状态一致性）
 
-> v1.1.1 起追加管理员守护开关契约自检与 `verify_product.ps1` 静态门禁，符号清单见「3.6 v1.1.1 行为变更要点」。上面 15 组 / 204 条为 v1.1.0 基线；v1.1.1 自检已扩至 16 组 218 条，以 `src/GreenSite.SelfTest/Program.cs` 的实际输出为准。
+> v1.1.1 起追加管理员守护开关契约自检与 `verify_product.ps1` 静态门禁（v1.1.1 提权方案已被 v1.1.2 替代，符号清单见「3.6」仅作历史留存）。上面为 v1.1.0 基线；v1.1.2 自检组数与条数**以 `src/GreenSite.SelfTest/Program.cs` 实际输出为准**，此处不写死。
 
 失败即退出码 1，`build.ps1` 中止。可单独运行：
 

@@ -193,8 +193,8 @@ if ((Test-Path -LiteralPath $coreDllV11 -PathType Leaf) -and
     Report $false 'v1.1.0 产物 DLL 存在' '无法检查产物 DLL'
 }
 
-# 14. v1.1.1：管理员守护开关（选项/参数字符串、设置页接线）。
-#     .NET 元数据名（属性/类型）走 #Strings 堆可用 ASCII 解码；
+# 14. v1.1.2：LocalSystem 服务单一高权限守护（只读静态检查，不启动进程 / 不读真实注册表）。
+#     .NET 元数据名（常量/方法/P-Invoke）走 #Strings 堆可用 ASCII 解码；
 #     字符串常量走 #US 堆为 UTF-16LE，必须用 Encoding.Unicode 才能命中。
 function Test-BinaryHasText([byte[]]$Bytes, [string]$Needle) {
     if ($null -eq $Bytes) { return $false }
@@ -204,46 +204,79 @@ function Test-BinaryHasText([byte[]]$Bytes, [string]$Needle) {
            ($unicodeText.IndexOf($Needle, [System.StringComparison]::Ordinal) -ge 0)
 }
 
-$coreDllV111 = Join-Path $root 'outputs\GreenSite\GreenSite.Core.dll'
-$appDllV111 = Join-Path $root 'outputs\GreenSite\GreenSite.dll'
-$guardExeV111 = Join-Path $root 'outputs\GreenSite\Guard.exe'
-$settingsXamlV111 = Join-Path $srcDir 'GreenSite\Views\SettingsPage.xaml'
-
-$coreBytesV111 = if (Test-Path -LiteralPath $coreDllV111 -PathType Leaf) {
-    [System.IO.File]::ReadAllBytes($coreDllV111)
+$coreDllV112 = Join-Path $root 'outputs\GreenSite\GreenSite.Core.dll'
+$coreBytesV112 = if (Test-Path -LiteralPath $coreDllV112 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($coreDllV112)
 } else { $null }
-$coreV111Ok = (Test-BinaryHasText $coreBytesV111 'ElevatedWatchdogEnabled') -and
-              (Test-BinaryHasText $coreBytesV111 '--elevated-watchdog')
-Report $coreV111Ok 'v1.1.1 Core.dll 含管理员守护选项与提权参数' `
-    'ASCII/Unicode 解码均缺少 ElevatedWatchdogEnabled 或 --elevated-watchdog'
+$coreV112Ok = (Test-BinaryHasText $coreBytesV112 'ServiceUserDataParam') -and
+              (Test-BinaryHasText $coreBytesV112 'DisableFlagPath')
+Report $coreV112Ok 'v1.1.2 Core.dll 含服务参数常量与守护关闭标记路径方法' `
+    'ASCII/Unicode 解码均缺少 ServiceUserDataParam 或 DisableFlagPath'
 
-$appBytesV111 = if (Test-Path -LiteralPath $appDllV111 -PathType Leaf) {
-    [System.IO.File]::ReadAllBytes($appDllV111)
+# 注意：Guard.exe 只是 apphost，IL 与 P/Invoke 名在 Guard.dll；优先检查 DLL，缺失时回退 exe。
+$guardDllV112 = Join-Path $root 'outputs\GreenSite\Guard.dll'
+$guardExeV112 = Join-Path $root 'outputs\GreenSite\Guard.exe'
+$guardBytesV112 = if (Test-Path -LiteralPath $guardDllV112 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($guardDllV112)
+} elseif (Test-Path -LiteralPath $guardExeV112 -PathType Leaf) {
+    [System.IO.File]::ReadAllBytes($guardExeV112)
 } else { $null }
-Report (Test-BinaryHasText $appBytesV111 'ElevatedWatchdogCheck') `
-    'v1.1.1 GreenSite.dll 含设置页管理员守护开关' `
-    'ASCII/Unicode 解码均缺少 ElevatedWatchdogCheck'
+$guardV112Ok = (Test-BinaryHasText $guardBytesV112 'WTSQueryUserToken') -and
+               (Test-BinaryHasText $guardBytesV112 'CreateProcessAsUser')
+Report $guardV112Ok 'v1.1.2 Guard.dll 含跨会话拉起 API（WTSQueryUserToken/CreateProcessAsUser）' `
+    'ASCII/Unicode 解码均缺少 WTSQueryUserToken 或 CreateProcessAsUser'
 
-# 注意：Guard.exe 只是 apphost，IL 与字符串常量在 Guard.dll；优先检查 DLL，缺失时回退 exe。
-$guardDllV111 = Join-Path $root 'outputs\GreenSite\Guard.dll'
-$guardBytesV111 = if (Test-Path -LiteralPath $guardDllV111 -PathType Leaf) {
-    [System.IO.File]::ReadAllBytes($guardDllV111)
-} elseif (Test-Path -LiteralPath $guardExeV111 -PathType Leaf) {
-    [System.IO.File]::ReadAllBytes($guardExeV111)
-} else { $null }
-$guardV111Ok = (Test-BinaryHasText $guardBytesV111 '--elevated-watchdog') -or
-               (Test-BinaryHasText $guardBytesV111 'ElevatedWatchdogEnabled')
-Report $guardV111Ok 'v1.1.1 Guard.exe 含提权守护参数/选项' `
-    'ASCII/Unicode 解码均缺少 --elevated-watchdog 或 ElevatedWatchdogEnabled'
+# 托盘源码：Guard/Program.cs 文本不得出现退出守护菜单（普通用户不能结束高权限守护）。
+$guardSrcV112 = Join-Path $srcDir 'GreenSite.Guard\Program.cs'
+$guardSrcTextV112 = if (Test-Path -LiteralPath $guardSrcV112 -PathType Leaf) {
+    Get-Content -LiteralPath $guardSrcV112 -Raw -Encoding UTF8
+} else { '' }
+$guardTrayOkV112 = ($guardSrcTextV112.Length -gt 0) -and
+                   ($guardSrcTextV112.IndexOf('ToolStripMenuItem("退出守护"',
+                        [System.StringComparison]::Ordinal) -lt 0) -and
+                   ($guardSrcTextV112.IndexOf('退出管理员守护',
+                        [System.StringComparison]::Ordinal) -lt 0)
+Report $guardTrayOkV112 'v1.1.2 Guard 托盘源码无退出守护菜单' `
+    'Guard/Program.cs 缺失或仍含退出守护 / 退出管理员守护菜单'
 
-$settingsOkV111 = $false
-if (Test-Path -LiteralPath $settingsXamlV111 -PathType Leaf) {
-    $settingsTextV111 = Get-Content -LiteralPath $settingsXamlV111 -Raw -Encoding UTF8
-    $settingsOkV111 = ($settingsTextV111 -match 'x:Name="ElevatedWatchdogCheck"') -and
-                      ($settingsTextV111 -match 'ElevatedWatchdog_Changed')
+# 设置页：Watchdog_Changed 方法体必须走密码门禁，且整体不含 v1.1.1 提权开关。
+$settingsCsV112 = Join-Path $srcDir 'GreenSite\Views\SettingsPage.xaml.cs'
+$settingsTextV112 = if (Test-Path -LiteralPath $settingsCsV112 -PathType Leaf) {
+    Get-Content -LiteralPath $settingsCsV112 -Raw -Encoding UTF8
+} else { '' }
+$watchdogSectionV112 = ''
+$wdStartV112 = $settingsTextV112.IndexOf('private void Watchdog_Changed', [System.StringComparison]::Ordinal)
+if ($wdStartV112 -ge 0) {
+    $wdOpenV112 = $settingsTextV112.IndexOf([char]'{', $wdStartV112)
+    if ($wdOpenV112 -ge 0) {
+        $wdDepthV112 = 0
+        for ($i = $wdOpenV112; $i -lt $settingsTextV112.Length; $i++) {
+            if ($settingsTextV112[$i] -eq [char]'{') { $wdDepthV112++ }
+            elseif ($settingsTextV112[$i] -eq [char]'}') {
+                $wdDepthV112--
+                if ($wdDepthV112 -eq 0) {
+                    $watchdogSectionV112 = $settingsTextV112.Substring($wdStartV112, $i - $wdStartV112 + 1)
+                    break
+                }
+            }
+        }
+    }
 }
-Report $settingsOkV111 'v1.1.1 设置页含管理员守护 CheckBox 与事件接线' `
-    '缺少 x:Name="ElevatedWatchdogCheck" 或 ElevatedWatchdog_Changed'
+$settingsV112Ok = ($watchdogSectionV112.IndexOf('RequirePassword',
+                       [System.StringComparison]::Ordinal) -ge 0) -and
+                  ($settingsTextV112.IndexOf('ElevatedWatchdogCheck',
+                       [System.StringComparison]::Ordinal) -lt 0)
+Report $settingsV112Ok 'v1.1.2 设置页守护开关加密码门禁且无提权开关' `
+    'Watchdog_Changed 缺少 RequirePassword，或源码仍含 ElevatedWatchdogCheck'
+
+# 安装器：服务需从注册表读取真实用户数据目录。
+$issTextV112 = if (Test-Path -LiteralPath $iss -PathType Leaf) {
+    Get-Content -LiteralPath $iss -Raw -Encoding UTF8
+} else { '' }
+$issV112Ok = ($issTextV112.IndexOf('UserDataDir', [System.StringComparison]::Ordinal) -ge 0) -and
+             ($issTextV112.IndexOf('RegWriteStringValue', [System.StringComparison]::Ordinal) -ge 0)
+Report $issV112Ok 'v1.1.2 setup.iss 写入 UserDataDir 供服务读取' `
+    '缺少 UserDataDir 或 RegWriteStringValue'
 
 # 15. Guard.exe 必须是 GUI 子系统：OutputType=Exe 会生成 Console 子系统，
 #     启动守护时伴随一个 cmd 窗口（v1.1.1 beta 实测问题），改为 WinExe 后 PE Subsystem=2。

@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Security;
 using System.Windows;
 using System.Windows.Controls;
@@ -44,8 +44,6 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         ShortcutIntervalBox.Text = adv.ShortcutCheckMinutes.ToString();
         BackupEnabledCheck.IsChecked = adv.BackupEnabled;
         WatchdogCheck.IsChecked = adv.WatchdogEnabled;
-        ElevatedWatchdogCheck.IsChecked = adv.ElevatedWatchdogEnabled;
-        ElevatedWatchdogCheck.IsEnabled = adv.WatchdogEnabled;
         ShieldEnabledCheck.IsChecked = adv.ShieldSchedule.Enabled;
         RenderShieldRows();
 
@@ -62,19 +60,10 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
                 adv.FileProtectionEnabled ? "文件保护已开启" : "文件保护已关闭";
         }
 
-        // 守护进程状态：区分管理员守护 / 普通守护 / 未运行；读取失败兜底为「未知」
+        // 守护状态：服务或用户级守护任一写心跳即视为运行中（v1.1.2 单一守护路径）。
         try
         {
-            var dir = WatchdogService.DefaultDirectory;
-            var timeout = WatchdogService.DefaultWatchdogTimeout;
-            WatchdogStatusText.Text = adv.ElevatedWatchdogEnabled &&
-                                      WatchdogService.IsElevatedWatchdogRunning(dir, timeout)
-                ? "管理员守护运行中"
-                : WatchdogService.IsWatchdogRunning(dir, timeout)
-                    ? (adv.ElevatedWatchdogEnabled
-                        ? "管理员守护未运行（已降级为普通守护，请重新授权）"
-                        : "普通守护运行中")
-                    : "未运行";
+            WatchdogStatusText.Text = WatchdogService.IsWatchdogRunning() ? "守护运行中" : "未运行";
         }
         catch
         {
@@ -457,91 +446,26 @@ public partial class SettingsPage : System.Windows.Controls.UserControl
         }
     }
 
-    // ── 守护进程 ──────────────────────────────────────────────
+    // ── 守护进程（v1.1.2：全部开关需密码，单一服务/用户级守护路径） ──
     private void Watchdog_Changed(object sender, RoutedEventArgs e)
     {
         if (_updating) return;
         var value = WatchdogCheck.IsChecked == true;
-        try
+        var applied = false;
+        AppState.Instance.RequirePassword("守护进程开关", () =>
         {
-            ElevatedWatchdogCheck.IsEnabled = value;
-            if (!value && ElevatedWatchdogCheck.IsChecked == true)
-            {
-                // 普通守护关闭时同步关闭管理员守护，避免高权限守护残留。
-                _updating = true;
-                ElevatedWatchdogCheck.IsChecked = false;
-                _updating = false;
-                AppState.Instance.AdvancedOptions.ElevatedWatchdogEnabled = false;
-            }
             AppState.Instance.AdvancedOptions.WatchdogEnabled = value;
+            WatchdogService.SetWatchdogDisabled(WatchdogService.DefaultDirectory, !value);
             AppState.Instance.SaveAdvancedOptions();
             WatchdogStatusText.Text = value ? "守护配置已保存" : "守护已关闭";
-        }
-        catch
+            applied = true;
+        });
+        if (!applied)
         {
             _updating = true;
             WatchdogCheck.IsChecked = !value;
             _updating = false;
-            System.Windows.MessageBox.Show("保存失败，请重试", "守护进程",
-                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
-    }
-
-    /// <summary>
-    /// v1.1.1：管理员守护开关。先落盘开关，再请求 UAC 提权启动 Guard.exe；
-    /// 用户取消授权时回滚开关，避免出现「配置已开但守护未提权」的假状态。
-    /// </summary>
-    private void ElevatedWatchdog_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_updating) return;
-        var value = ElevatedWatchdogCheck.IsChecked == true;
-        if (value && WatchdogCheck.IsChecked != true)
-        {
-            // 管理员守护以普通守护为基石；打开时自动带上基础开关。
-            _updating = true;
-            WatchdogCheck.IsChecked = true;
-            _updating = false;
-            AppState.Instance.AdvancedOptions.WatchdogEnabled = true;
-        }
-        try
-        {
-            AppState.Instance.AdvancedOptions.ElevatedWatchdogEnabled = value;
-            AppState.Instance.SaveAdvancedOptions();
-
-            if (!value)
-            {
-                // 配置已落盘，提权守护每 10 秒读取一次，会自行退出，无需再次 UAC。
-                WatchdogStatusText.Text = "管理员守护退出中（约 10 秒）";
-                return;
-            }
-
-            var guard = Path.Combine(AppContext.BaseDirectory, "Guard.exe");
-            if (!File.Exists(guard) || !WatchdogService.StartElevatedWatchdog(guard))
-            {
-                RollbackElevatedWatchdog();
-                System.Windows.MessageBox.Show(
-                    "未获得管理员授权或守护程序缺失，管理员守护未启用。",
-                    "管理员守护", System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Warning);
-                return;
-            }
-            WatchdogStatusText.Text = "管理员守护启动中…";
-        }
-        catch
-        {
-            RollbackElevatedWatchdog();
-            System.Windows.MessageBox.Show("设置失败，请重试", "管理员守护",
-                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-        }
-    }
-
-    private void RollbackElevatedWatchdog()
-    {
-        AppState.Instance.AdvancedOptions.ElevatedWatchdogEnabled = false;
-        AppState.Instance.SaveAdvancedOptions();
-        _updating = true;
-        ElevatedWatchdogCheck.IsChecked = false;
-        _updating = false;
     }
 
     // ── 关闭防护时段 ──────────────────────────────────────────

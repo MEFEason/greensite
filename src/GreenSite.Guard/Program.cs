@@ -1,21 +1,18 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using GreenSite.Core.Core;
-using GreenSite.Core.Security;
 
 namespace GreenSite.Guard;
 
 /// <summary>
-/// 独立守护进程 / 服务（零 NuGet、无驱动、无注入、无隐藏启动）。
-/// --watchdog：用户会话内以托盘图标运行的守护进程；
-/// --watchdog --elevated-watchdog：v1.1.1 管理员守护（UAC 提权，普通用户无法结束）；
-/// 无参数：由 sc.exe 以 Windows 服务方式启动（最小 ServiceBase 实现）。
-/// 三者都只做「检测心跳 → 超时拉起主程序」，不结束任何进程；
-/// 管理员守护拉起主程序时经 explorer.exe 降权，不让主程序继承管理员权限。
+/// 独立守护程序（零 NuGet、无驱动、无注入、无隐藏启动）。
+/// --watchdog：用户会话内的托盘守护进程（无服务时的降级路径，托盘无退出菜单）；
+/// 无参数：由 sc.exe 以 LocalSystem 服务启动，在活动用户会话拉起主程序（v1.1.2 唯一高权限守护）。
+/// 两者只做「检测心跳 → 超时拉起主程序」，不结束任何进程。
 /// </summary>
 internal static class Program
 {
-    private static readonly string AppData = WatchdogService.DefaultDirectory;
+    private static string _dataDir = WatchdogService.DefaultDirectory;
     private static readonly string ExePath = Path.Combine(AppContext.BaseDirectory, "GreenSite.exe");
 
     [STAThread]
@@ -23,43 +20,49 @@ internal static class Program
     {
         if (args.Any(a => a == WatchdogService.WatchdogArgument))
         {
-            // v1.1.1：同一用户会话内经 UAC 提权运行的守护，只多写一份心跳。
-            var elevated = args.Any(a => a == WatchdogService.ElevatedWatchdogArgument);
-            RunUserWatchdog(elevated);
+            _dataDir = WatchdogService.DefaultDirectory;
+            RunUserWatchdog();
             return;
         }
 
+        // 服务：从注册表读取安装时写入的真实用户数据目录（LocalSystem 的 LOCALAPPDATA 是 systemprofile）。
+        _dataDir = ReadServiceUserDataDir() ?? WatchdogService.DefaultDirectory;
         RunService();
     }
 
-    private static void Tick(bool elevated)
+    private static string? ReadServiceUserDataDir()
     {
-        if (elevated)
+        try
         {
-            WatchdogService.WriteElevatedWatchdogHeartbeat(AppData);
-            var store = new OptionsStore(AppData);
-            if (store.Exists && WatchdogService.ShouldElevatedWatchdogExit(store.Load()))
-            {
-                // 用户在设置页关闭开关后自行退出，无需再次触发 UAC。
-                RequestGuardExit();
-                return;
-            }
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Services\GreenSiteGuard\Parameters");
+            return key?.GetValue(WatchdogService.ServiceUserDataParam) as string;
+        }
+        catch { return null; }
+    }
+
+    private static void Tick(bool isService)
+    {
+        WatchdogService.WriteWatchdogHeartbeat(_dataDir);
+
+        // v1.1.2：设置页关闭守护后写标记；守护读到即停止守护并（用户级）自行退出。
+        if (WatchdogService.IsWatchdogDisabled(_dataDir))
+        {
+            if (!isService) RequestGuardExit();
+            return;
+        }
+
+        if (WatchdogService.IsMainAlive(_dataDir, WatchdogService.DefaultMainTimeout)) return;
+        if (!File.Exists(ExePath)) return;
+
+        if (isService)
+        {
+            // 服务在 Session 0：必须借用户 token 在活动会话拉起，否则 GUI 在错误会话显示「未响应」。
+            LaunchMainInUserSession();
         }
         else
         {
-            WatchdogService.WriteWatchdogHeartbeat(AppData);
-        }
-
-        if (WatchdogService.IsMainAlive(AppData, WatchdogService.DefaultMainTimeout)) return;
-        try
-        {
-            if (!File.Exists(ExePath)) return;
-            if (elevated)
-            {
-                // 管理员守护只负责恢复主程序，不能让主程序继承管理员权限。
-                WatchdogService.LaunchMainDeescalated(ExePath);
-            }
-            else
+            try
             {
                 Process.Start(new ProcessStartInfo(ExePath)
                 {
@@ -68,45 +71,36 @@ internal static class Program
                     WorkingDirectory = Path.GetDirectoryName(ExePath) ?? "",
                 });
             }
+            catch { /* 拉起失败下一次再试 */ }
         }
-        catch { /* 拉起失败下一次再试，不上抛 */ }
     }
 
-    private static void RequestGuardExit()
-    {
-        System.Windows.Forms.Application.ExitThread();
-        StopEvent.Set();
-    }
-
-    // ── 用户会话守护进程（托盘可见） ───────────────────────────
-    private static void RunUserWatchdog(bool elevated)
+    // ── 用户会话守护进程（托盘可见，无退出菜单） ──────────────
+    private static void RunUserWatchdog()
     {
         System.Windows.Forms.Application.EnableVisualStyles();
-        var title = elevated ? "GreenSite 管理员守护（运行中）" : "GreenSite 守护进程（运行中）";
         using var tray = new System.Windows.Forms.NotifyIcon
         {
             Icon = new System.Drawing.Icon(
                 Path.Combine(AppContext.BaseDirectory, "assets", "app.ico")),
-            Text = title,
+            Text = "GreenSite 守护进程（运行中）",
             Visible = true,
         };
+        // v1.1.2：托盘不再提供退出菜单，避免普通用户结束守护；关闭走设置页 + 密码。
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add(new System.Windows.Forms.ToolStripMenuItem(
-            elevated ? "管理员守护运行中（UAC 提权，普通用户无法结束）" :
-                       "守护进程运行中（关闭菜单退出守护）") { Enabled = false });
-        var exit = new System.Windows.Forms.ToolStripMenuItem(
-            elevated ? "退出管理员守护（需管理员权限）" : "退出守护");
-        exit.Click += (_, _) => System.Windows.Forms.Application.ExitThread();
-        menu.Items.Add(exit);
+            "守护进程运行中（关闭请在主程序设置页操作）") { Enabled = false });
         tray.ContextMenuStrip = menu;
 
         using var timer = new System.Windows.Forms.Timer { Interval = 10_000 };
-        timer.Tick += (_, _) => Tick(elevated);
-        Tick(elevated);
+        timer.Tick += (_, _) => Tick(false);
+        Tick(false);
         timer.Start();
         System.Windows.Forms.Application.Run();
         timer.Stop();
     }
+
+    private static void RequestGuardExit() => System.Windows.Forms.Application.ExitThread();
 
     // ── Windows 服务（最小 P/Invoke 实现，零 NuGet） ───────────
     private static readonly ManualResetEvent StopEvent = new(false);
@@ -123,7 +117,7 @@ internal static class Program
         _worker = new Thread(() =>
         {
             SetState(ServiceState.Running);
-            while (!StopEvent.WaitOne(15_000)) Tick(false);
+            while (!StopEvent.WaitOne(15_000)) Tick(true);
             SetState(ServiceState.Stopped);
         });
         _worker.IsBackground = true;
@@ -140,6 +134,35 @@ internal static class Program
             StopEvent.Set();
         }
         return 0;
+    }
+
+    // ── 跨会话拉起主程序（WTS → DuplicateTokenEx → CreateEnvironmentBlock → CreateProcessAsUser）──
+    private static void LaunchMainInUserSession()
+    {
+        IntPtr userToken = IntPtr.Zero, primaryToken = IntPtr.Zero, env = IntPtr.Zero;
+        try
+        {
+            var session = WTSGetActiveConsoleSessionId();
+            if (session == 0xFFFFFFFF) return;
+            if (!WTSQueryUserToken(session, out userToken)) return;
+            if (!DuplicateTokenEx(userToken, MAXIMUM_ALLOWED, IntPtr.Zero,
+                    SecurityImpersonation, TokenPrimary, out primaryToken)) return;
+            if (!CreateEnvironmentBlock(out env, primaryToken, false)) return;
+
+            var si = new STARTUPINFO { cb = Marshal.SizeOf(typeof(STARTUPINFO)) };
+            if (!CreateProcessAsUser(primaryToken, null, $"\"{ExePath}\" --minimized",
+                    IntPtr.Zero, IntPtr.Zero, false, 0, env,
+                    Path.GetDirectoryName(ExePath), ref si, out var pi)) return;
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+        catch { /* 跨会话拉起失败下一次再试 */ }
+        finally
+        {
+            if (env != IntPtr.Zero) DestroyEnvironmentBlock(env);
+            if (primaryToken != IntPtr.Zero) CloseHandle(primaryToken);
+            if (userToken != IntPtr.Zero) CloseHandle(userToken);
+        }
     }
 
     private enum ServiceState { Stopped = 1, StartPending = 2, StopPending = 3, Running = 4 }
@@ -172,10 +195,47 @@ internal static class Program
         public int WaitHint;
     }
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr RegisterServiceCtrlHandlerEx(
-        string serviceName, HandlerEx handler, IntPtr context);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFO
+    {
+        public int cb;
+        public string? lpReserved;
+        public string? lpDesktop;
+        public string? lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess, hThread;
+        public int dwProcessId, dwThreadId;
+    }
+
+    private const uint MAXIMUM_ALLOWED = 0x02000000;
+    private const int SecurityImpersonation = 2;
+    private const int TokenPrimary = 1;
+
+    [DllImport("kernel32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    private static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool DuplicateTokenEx(IntPtr existing, uint access, IntPtr attributes,
+        int impersonationLevel, int tokenType, out IntPtr newToken);
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, bool inherit);
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr environment);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcessAsUser(IntPtr token, string? application, string commandLine,
+        IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags,
+        IntPtr environment, string? currentDirectory, ref STARTUPINFO startupInfo,
+        out PROCESS_INFORMATION processInformation);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr RegisterServiceCtrlHandlerEx(string serviceName, HandlerEx handler, IntPtr context);
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool SetServiceStatus(IntPtr handle, ref ServiceStatus status);
 }
